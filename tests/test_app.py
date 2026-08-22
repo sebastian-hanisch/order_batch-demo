@@ -39,7 +39,7 @@ from batch_local_search import (
     route_batch,
     two_opt_history,
 )
-from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
+from batch_ortools_solver import apply_exact_tsp_polish, estimated_model_size, exact_tsp_single_batch, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_presets import SETTING_SPECS, apply_preset, bounds, load_permalink_settings
 from batch_visualization import _batch_style
@@ -894,6 +894,108 @@ def test_solve_with_cpsat_single_order_single_batch():
     assert status == "OPTIMAL"
     assert len(batches) == 1
     assert batches[0]["order_ids"] == [1]
+
+
+# ---------------------------------------------------------------------------
+# Exakte TSP-Politur je Batch (CP-SAT, apply_exact_tsp_polish)
+# ---------------------------------------------------------------------------
+
+def test_exact_tsp_single_batch_matches_brute_force_on_tiny_instance():
+    import itertools
+
+    aisles = np.array([0, 2, 1, 3, 0, 2])
+    positions = np.array([5.0, 25.0, 12.0, 3.0, 18.0, 9.0])
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
+    items = list(range(6))
+
+    best_dist = min(route_distance(list(p), D) for p in itertools.permutations(items))
+    route, dist, status = exact_tsp_single_batch(items, D, time_limit_s=10)
+
+    assert status == "OPTIMAL"
+    assert dist == pytest.approx(best_dist, abs=1e-6)
+    assert route_distance(route, D) == pytest.approx(best_dist, abs=1e-6)
+    assert sorted(route) == items
+
+
+def test_exact_tsp_single_batch_handles_single_item():
+    aisles = np.array([2])
+    positions = np.array([7.0])
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
+
+    route, dist, status = exact_tsp_single_batch([0], D, time_limit_s=5)
+
+    assert status == "OPTIMAL"
+    assert route == [0]
+    assert dist == pytest.approx(route_distance([0], D))
+
+
+def test_exact_tsp_single_batch_handles_empty():
+    aisles = np.array([0])
+    positions = np.array([0.0])
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
+
+    route, dist, status = exact_tsp_single_batch([], D, time_limit_s=5)
+
+    assert status == "OPTIMAL"
+    assert route == []
+    assert dist == 0.0
+
+
+def test_apply_exact_tsp_polish_never_worse_than_input_routes():
+    orders, aisles, positions, _volumes = _sample_orders(n_orders=8, items_min=1, items_max=3, n_aisles=5, aisle_length=20.0, seed=31)
+    item_sizes = _positions_sizes(aisles)
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
+    batches = greedy_seed_batching(orders, capacity=6, aisles=aisles, positions=positions, aisle_spacing=3.0, item_sizes=item_sizes)
+    routes = [route_batch(b["items"], D)[-1][0] for b in batches]
+    before_total = sum(route_distance(r, D) for r in routes)
+
+    polished_routes, summary = apply_exact_tsp_polish(batches, routes, D, per_batch_time_limit_s=3, total_time_budget_s=30)
+
+    assert summary["total_distance"] <= before_total + 1e-6
+    assert summary["total_distance"] == pytest.approx(sum(route_distance(r, D) for r in polished_routes))
+    for b, r in zip(batches, polished_routes):
+        assert sorted(r) == sorted(b["items"])
+
+
+def test_apply_exact_tsp_polish_improves_a_deliberately_bad_starting_route():
+    import itertools
+
+    aisles = np.array([0, 3, 1, 4, 2])
+    positions = np.array([2.0, 28.0, 15.0, 4.0, 20.0])
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
+    items = list(range(5))
+    batches = [{"order_ids": [1], "items": items}]
+
+    best_dist = min(route_distance(list(p), D) for p in itertools.permutations(items))
+    # Bewusst eine schlechte Route uebergeben (unsortierte Reihenfolge, nicht
+    # die per Brute-Force gefundene beste) - real ueberpruefen statt
+    # anzunehmen, dass sie tatsaechlich schlechter ist.
+    bad_route = [1, 3, 0, 4, 2]
+    bad_dist = route_distance(bad_route, D)
+    assert bad_dist > best_dist + 1e-6
+
+    polished_routes, summary = apply_exact_tsp_polish(batches, [bad_route], D, per_batch_time_limit_s=5, total_time_budget_s=30)
+
+    assert summary["n_improved"] == 1
+    assert route_distance(polished_routes[0], D) == pytest.approx(best_dist, abs=1e-6)
+
+
+def test_apply_exact_tsp_polish_respects_total_time_budget():
+    orders, aisles, positions, _volumes = _sample_orders(n_orders=6, items_min=1, items_max=2, n_aisles=4, aisle_length=15.0, seed=32)
+    item_sizes = _positions_sizes(aisles)
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=15.0)
+    batches = greedy_seed_batching(orders, capacity=4, aisles=aisles, positions=positions, aisle_spacing=3.0, item_sizes=item_sizes)
+    routes = [route_batch(b["items"], D)[-1][0] for b in batches]
+
+    # Negatives Budget statt 0: garantiert bereits "ueberschritten" ohne auf
+    # die Uhrzeitaufloesung angewiesen zu sein (unter Windows kann time.time()
+    # eine Aufloesung von ~15ms haben - ein Budget von exakt 0 waere damit
+    # nicht zuverlaessig als "sofort ueberschritten" erkennbar).
+    polished_routes, summary = apply_exact_tsp_polish(batches, routes, D, per_batch_time_limit_s=3, total_time_budget_s=-1)
+
+    assert summary["n_attempted"] == 0
+    assert summary["n_skipped_budget"] == len(batches)
+    assert polished_routes == routes
 
 
 # ---------------------------------------------------------------------------

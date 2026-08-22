@@ -21,7 +21,9 @@ import time
 import numpy as np
 import streamlit as st
 
+from batch_constants import CPSAT_COOLDOWN_BUFFER, CPSAT_POLISH_TIME_LIMIT_MAX_S, CPSAT_POLISH_TOTAL_BUDGET_S
 from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, route_leg_distances
+from batch_ortools_solver import apply_exact_tsp_polish
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_visualization import build_batch_detail_figure, build_warehouse_overview_figure
 
@@ -149,6 +151,90 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
         "📄 Batchplan als PDF herunterladen", data=pdf_bytes,
         file_name=f"batchplan_{prefix}.pdf", mime="application/pdf", key=f"{prefix}_pdf_download",
     )
+
+    st.markdown("**🎯 Touren exakt nachschärfen (optional)**")
+    st.caption(
+        "Löst jede der oben gezeigten Batch-Routen ZUSÄTZLICH exakt mit CP-SAT (statt "
+        "Nearest-Neighbor + 2-opt) und behält je Batch die kürzere Route - die Batch-Zuteilung "
+        "selbst (welche Bestellung in welchem Batch landet) bleibt dabei unverändert, nur die "
+        "Reihenfolge innerhalb jeder Route wird ggf. nachgeschärft. Wegen der Rechenzeit "
+        "button-gesteuert, nicht automatisch."
+    )
+    polish_time_limit = st.slider(
+        "Zeitlimit je Batch (Sekunden)", 1, CPSAT_POLISH_TIME_LIMIT_MAX_S, CPSAT_POLISH_TIME_LIMIT_MAX_S,
+        key=f"{prefix}_polish_time_limit",
+        help=f"Zusätzlich hart auf {CPSAT_POLISH_TOTAL_BUDGET_S}s über ALLE Batches zusammen "
+        "gedeckelt, unabhängig von diesem Regler - bei vielen großen Batches werden die "
+        "verbleibenden dann unverändert mit ihrer bisherigen Route übernommen.",
+    )
+    polish_key = (tuple(tuple(b["items"]) for b in batches), polish_time_limit)
+
+    cooldown_state_key = f"{prefix}_polish_last_solve_time"
+    if cooldown_state_key not in st.session_state:
+        st.session_state[cooldown_state_key] = 0.0
+
+    polish_clicked = st.button("🎯 Touren exakt nachschärfen", key=f"{prefix}_polish_btn")
+    if polish_clicked:
+        since_last = time.time() - st.session_state[cooldown_state_key]
+        if since_last < CPSAT_COOLDOWN_BUFFER:
+            st.warning(f"⏳ Bitte noch {CPSAT_COOLDOWN_BUFFER - since_last:.0f}s warten, bevor Sie erneut nachschärfen.")
+        else:
+            with st.spinner(f"CP-SAT schärft die Touren nach (bis zu {polish_time_limit}s je Batch)..."):
+                polished_routes, polish_summary = apply_exact_tsp_polish(
+                    batches, final_routes, D, polish_time_limit, CPSAT_POLISH_TOTAL_BUDGET_S,
+                )
+            st.session_state[cooldown_state_key] = time.time()
+            st.session_state[f"{prefix}_polish_result"] = {
+                "routes": polished_routes, "summary": polish_summary, "key": polish_key,
+            }
+
+    polish_result = st.session_state.get(f"{prefix}_polish_result")
+    if polish_result is not None and polish_result["key"] == polish_key:
+        polish_summary = polish_result["summary"]
+        polished_routes = polish_result["routes"]
+        saved_pct = 0.0 if total_dist <= 0 else 100 * (total_dist - polish_summary["total_distance"]) / total_dist
+
+        if polish_summary["n_skipped_budget"] > 0:
+            st.warning(
+                f"⏱️ Zeitbudget ({CPSAT_POLISH_TOTAL_BUDGET_S}s) ausgeschöpft - "
+                f"{polish_summary['n_skipped_budget']} von {polish_summary['n_batches']} Batches "
+                "unverändert übernommen."
+            )
+        if polish_summary["n_improved"] == 0:
+            st.info(
+                "Keine Batch-Route ließ sich verbessern - die 2-opt-Lösung war für alle geprüften "
+                "Batches bereits nachweislich optimal oder zumindest ebenso gut."
+            )
+        else:
+            st.success(f"✅ {polish_summary['n_improved']} von {polish_summary['n_attempted']} geprüften Batches wurden kürzer.")
+        if polish_summary["n_not_proven_optimal"] > 0:
+            st.caption(
+                f"⚠️ Bei {polish_summary['n_not_proven_optimal']} von {polish_summary['n_attempted']} geprüften "
+                "Batches konnte Optimalität innerhalb des Zeitlimits nicht bewiesen werden (bestmögliche in "
+                "der Zeit gefundene Lösung, ggf. mit mehr Zeit noch verbesserbar)."
+            )
+
+        pm1, pm2, pm3 = st.columns(3)
+        pm1.metric(
+            "Laufdistanz nach Politur", f"{polish_summary['total_distance']:.0f} m",
+            delta=f"-{saved_pct:.1f} %" if saved_pct > 0 else None, delta_color="inverse",
+        )
+        pm2.metric("Geprüfte Batches", f"{polish_summary['n_attempted']}/{polish_summary['n_batches']}")
+        pm3.metric("Rechenzeit", f"{polish_summary['elapsed_s']:.1f} s")
+
+        fig_polish = build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spacing, batches, polished_routes)
+        st.plotly_chart(fig_polish, width="stretch", key=f"{prefix}_polish_plot")
+
+        pdf_bytes_polish = generate_batch_plan_pdf(
+            f"{label} + CP-SAT-Politur", batches, polished_routes, order_ids_by_item, aisles, positions, D,
+            capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour,
+        )
+        st.download_button(
+            "📄 Nachgeschärften Batchplan als PDF herunterladen", data=pdf_bytes_polish,
+            file_name=f"batchplan_{prefix}_polished.pdf", mime="application/pdf", key=f"{prefix}_polish_pdf_download",
+        )
+    elif polish_result is not None:
+        st.info("⚠️ Die Eingaben haben sich seit dieser Politur geändert - bitte erneut nachschärfen.")
 
     return {
         "key": prefix, "label": label, "total_distance": total_dist, "n_batches": n_batches,

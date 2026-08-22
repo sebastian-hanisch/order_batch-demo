@@ -38,7 +38,10 @@ bereits der reine Modellaufbau mehrere Sekunden bis Minuten, unabhängig vom
 Zeitlimit für die eigentliche Suche.
 """
 
+import time
+
 from batch_constants import EPS
+from batch_evaluation import route_distance
 
 CPSAT_SCALE = 100
 
@@ -162,3 +165,125 @@ def solve_with_cpsat(orders, capacity, item_sizes, D, num_batches, time_limit_s)
         batches.append({"order_ids": oids, "items": route_items, "route": route_items})
 
     return batches, status, solver.WallTime()
+
+
+def exact_tsp_single_batch(item_indices, D, time_limit_s):
+    """Löst das Traveling-Salesman-Teilproblem EINES bereits feststehenden
+    Batches exakt bzw. nahe-exakt mit CP-SAT: ein einzelner Hamiltonkreis
+    über Depot + die Positionen dieses Batches (model.AddCircuit) - ohne
+    Zuteilungsvariablen, da die Batch-Zusammensetzung hier schon feststeht
+    (Spezialfall von solve_with_cpsat, der nur den Routing-Anteil EINES
+    Batch-Slots isoliert). Genutzt als optionale Politur-Stufe für ein
+    bereits fertiges Ergebnis, siehe apply_exact_tsp_polish.
+
+    Gibt (route, distanz, status) zurück. `status` ist "OPTIMAL"
+    (nachweislich optimal), "FEASIBLE" (beste gefundene Lösung, Optimalität
+    nicht bewiesen) oder "UNKNOWN" (binnen Zeitlimit keine zulässige Lösung
+    gefunden - bei einem Hamiltonkreis über einen vollständigen Graphen
+    praktisch nur bei sehr knappem Zeitlimit und großem n überhaupt
+    möglich; in diesem Fall wird die Eingabereihenfolge unverändert
+    zurückgegeben, apply_exact_tsp_polish behält dann ohnehin die
+    bisherige, mindestens ebenso gute heuristische Route)."""
+    from ortools.sat.python import cp_model
+
+    n = len(item_indices)
+    if n <= 1:
+        route = list(item_indices)
+        return route, route_distance(route, D), "OPTIMAL"
+
+    model = cp_model.CpModel()
+    nodes = list(range(n + 1))
+
+    arc_lits = {}
+    arcs = []
+    for a in nodes:
+        for b in nodes:
+            if a == b:
+                continue
+            lit = model.NewBoolVar(f"arc_{a}_{b}")
+            arc_lits[a, b] = lit
+            arcs.append((a, b, lit))
+    model.AddCircuit(arcs)
+
+    def d_scaled(a, b):
+        real_a = 0 if a == 0 else item_indices[a - 1] + 1
+        real_b = 0 if b == 0 else item_indices[b - 1] + 1
+        return int(round(D[real_a, real_b] * CPSAT_SCALE))
+
+    model.Minimize(sum(arc_lits[a, b] * d_scaled(a, b) for a, b in arc_lits))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit_s
+    solver.parameters.num_search_workers = 8
+    cp_status = solver.Solve(model)
+
+    if cp_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        route = list(item_indices)
+        return route, route_distance(route, D), "UNKNOWN"
+
+    next_node = {}
+    for (a, b), lit in arc_lits.items():
+        if solver.Value(lit):
+            next_node[a] = b
+    route = []
+    node = next_node[0]
+    while node != 0:
+        route.append(item_indices[node - 1])
+        node = next_node[node]
+
+    status = "OPTIMAL" if cp_status == cp_model.OPTIMAL else "FEASIBLE"
+    return route, route_distance(route, D), status
+
+
+def apply_exact_tsp_polish(batches, routes, D, per_batch_time_limit_s, total_time_budget_s):
+    """Politur-Stufe NACH einem bereits fertigen Ergebnis (Greedy-Seed/
+    Zonen-Sweep + Inter-Batch-Suche + 2-opt, siehe batch_local_search.py):
+    löst jede Batch-Route zusätzlich exakt mit CP-SAT
+    (exact_tsp_single_batch) und behält je Batch die kürzere der beiden
+    Routen - button-gesteuert in app.py, NICHT automatisch (siehe
+    CPSAT_POLISH_TOTAL_BUDGET_S in batch_constants.py für die Begründung).
+
+    `total_time_budget_s` deckelt die GESAMTE Politur hart, nicht nur
+    einen einzelnen Batch: sobald überschritten, werden die verbleibenden
+    Batches unverändert mit ihrer bisherigen heuristischen Route
+    übernommen (nie schlechter als vorher, nur eben nicht zusätzlich
+    geprüft) - verhindert, dass ein einzelner Klick bei vielen großen
+    Batches unbegrenzt lange läuft, unabhängig vom je-Batch-Zeitlimit.
+
+    Gibt (neue Routen, Kennzahlen-Dict) zurück - das Dict enthält u. a.
+    "n_improved" (wie viele Batches tatsächlich eine kürzere Route
+    bekamen) und "n_not_proven_optimal" (wie viele der TATSÄCHLICH
+    geprüften Batches ihr Zeitlimit ausgeschöpft haben, ohne Optimalität
+    zu beweisen) - fürs UI, um ehrlich zu kommunizieren, ob das Ergebnis
+    nachweislich optimal ist oder nur "so gut wie in der verfügbaren Zeit
+    gefunden"."""
+    new_routes = list(routes)
+    t_start = time.time()
+    n_attempted = 0
+    n_improved = 0
+    n_skipped_budget = 0
+    n_not_proven_optimal = 0
+
+    for idx, (b, r) in enumerate(zip(batches, routes)):
+        if time.time() - t_start > total_time_budget_s:
+            n_skipped_budget = len(batches) - idx
+            break
+        n_attempted += 1
+        current_dist = route_distance(r, D)
+        cp_route, cp_dist, status = exact_tsp_single_batch(b["items"], D, per_batch_time_limit_s)
+        if status != "OPTIMAL":
+            n_not_proven_optimal += 1
+        if cp_dist < current_dist - EPS:
+            new_routes[idx] = cp_route
+            n_improved += 1
+
+    summary = {
+        "n_batches": len(batches),
+        "n_attempted": n_attempted,
+        "n_improved": n_improved,
+        "n_skipped_budget": n_skipped_budget,
+        "n_not_proven_optimal": n_not_proven_optimal,
+        "elapsed_s": time.time() - t_start,
+        "total_distance": sum(route_distance(r, D) for r in new_routes),
+    }
+    return new_routes, summary

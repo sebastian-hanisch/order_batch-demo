@@ -744,6 +744,87 @@ Drei neue Tests für `route_leg_distances` (Summe entspricht `route_distance`, k
 Abschnitte, leere Route). Live im Browser verifiziert: Hover-Text je Halt und beide neuen
 Bildunterschriften rendern korrekt.
 
+## Optionale Politur: exaktes TSP je Batch statt Ratliff/Rosenthal-DP
+
+Auf Nutzeranfrage ("gibt's wirklich nichts mehr zur Tourenverbesserung?") zunächst gemessen, WIE
+GROSS die tatsächliche Optimalitätslücke von 2-opt für dieses konkrete Distanzmodell (parallele
+Gänge zwischen zwei Quergassen) überhaupt noch ist - per Vollenumeration (n=6-8) und CP-SAT-exakter
+Einzel-Batch-Lösung (n=10-40) gemessen, unabhängig von der Batch-Zuteilung:
+
+| Batch-Größe | Lücke 2-opt vs. echtes Optimum |
+|---|---|
+| 6-8 (Vollenumeration) | 0,0-0,6% |
+| 10 | Ø 0,8% |
+| 15-30 | Ø 1,4-1,5% |
+| 40 | Ø 2,0% (Ausreißer bis 5,15%) |
+
+Eine reale, aber kleine Lücke - lohnt eine genauere Betrachtung. Für DIESES Lagerlayout (Ein-Block,
+zwei Quergassen) existiert ein klassischer exakter Algorithmus in Polynomialzeit: Ratliff & Rosenthal
+(1983), "Order-Picking in a Rectangular Warehouse: A Solvable Case of the Traveling Salesman
+Problem", Operations Research 31(3):507-521 - eine Dynamic-Programming-Lösung über Zustände je Gang,
+später von Roodbergen & de Koster (2001) auf Zwei-Block-Lager erweitert. Passt exakt zum Lagermodell
+dieser App. Drei Recherche-Runden (Web-Suche + Fetch mehrerer Paper, u. a. eine 2024er
+graphentheoretische Neuformulierung mit 7 Zuständen) konnten die kritische Zustands-Übergangstabelle
+("Table 2" im Originalpaper) nicht zuverlässig extrahieren, und keine verifizierbare
+Referenzimplementierung war auffindbar (Code laut mehreren Papern nur "auf Anfrage bei den Autoren"
+verfügbar) - ein mehrstufiger DP-Algorithmus aus einer unvollständig verstandenen Quelle
+nachzubauen wäre ein zu hohes Risiko für einen stillen, schwer zu entdeckenden Korrektheitsfehler
+gewesen (falsch, aber plausibel aussehende Routen statt eines Absturzes).
+
+**Vor der endgültigen Entscheidung zusätzlich geprüft, ob es ein "billigeres" exaktes Verfahren als
+CP-SAT gibt** (Nutzerfrage): Held-Karp, der klassische exakte TSP-DP-Algorithmus (`O(2^n · n²)`,
+Standard-Lehrbuchalgorithmus ohne Zustands-Ambiguität). Korrekt (exakt gegen Brute-Force geprüft),
+aber nur für winzige Batches wirklich günstiger:
+
+| n | Held-Karp | CP-SAT |
+|---|---|---|
+| 8 | 2 ms | 353 ms |
+| 10 | 11 ms | 20 ms |
+| 12 | 65 ms | 29 ms |
+| 16 | 1,7 s | 48 ms |
+| 20 | 42 s | 51 ms |
+| 22 | 3,3 Min | 34 ms |
+
+Ab n≈12 explodiert Held-Karp exponentiell (bei n=24 wären ~6 GB Speicher nötig, bei n=30 ~500 GB),
+während CP-SAT dank Branch-and-Cut praktisch konstant bleibt (auch bei n=40 <0,4s, siehe unten). Da
+Batches hier bis n=60 reichen können, hätte Held-Karp entweder komplett versagt oder eine
+Fallunterscheidung gebraucht - für eine Ersparnis von wenigen Millisekunden bei ohnehin schon
+schnellen kleinen Batches. Kein Wechsel.
+
+**Stattdessen: die bereits im Projekt vorhandene, validierte CP-SAT-Infrastruktur
+(`batch_ortools_solver.py`) wiederverwenden** - nicht für das GESAMTE Zuteilungs+Routing-Modell
+(das skaliert schlecht, siehe CP-SAT-Vergleichslöser-Abschnitt oben), sondern isoliert je einzelnem,
+bereits feststehenden Batch: ein einzelner Hamiltonkreis über Depot + die Positionen dieses Batches
+(`exact_tsp_single_batch`, dieselbe `AddCircuit`-Modellierung wie beim Vergleichslöser, nur ohne
+Zuteilungsvariablen). Das skaliert GUT: n=40 in <0,4s je Batch, nachweislich optimal.
+
+**Als optionale Politur-Stufe integriert** (`apply_exact_tsp_polish`), NICHT automatisch bei jeder
+Einstellungsänderung: ein Worst-Case-Benchmark (Regler-Maximalwerte - 80 Bestellungen, Kapazität 60,
+19 Batches mit bis zu 60 Positionen) brauchte 11,5-17,8s Gesamtzeit für alle Batches zusammen - für
+einen automatischen Schritt auf dem kostenlosen Hosting-Tarif bei jedem Rerun nicht vertretbar.
+Stattdessen ein Button je Strategie-Tab (Greedy-Seed, Zonen-Sweep), mit Zeitlimit-Regler je Batch
+(1-3s), Cooldown (wie beim bestehenden CP-SAT-Tab) und einem harten GESAMT-Zeitbudget
+(`CPSAT_POLISH_TOTAL_BUDGET_S`, 20s) - bei Überschreitung werden verbleibende Batches unverändert mit
+ihrer bisherigen heuristischen Route übernommen, nie schlechter als vorher. Behält je Batch immer die
+kürzere der beiden Routen (analog `_apply_final_safety_net`) - ein Timeout ohne bewiesene Optimalität
+(Status "FEASIBLE"/"UNKNOWN") kann die Route also nie verschlechtern.
+
+In der Praxis findet die Politur auf den meisten Instanzen dieser App wenig bis nichts: die
+Kombination aus Inter-Batch-Suche, Iterated Local Search und `_apply_final_safety_net` bringt die
+2-opt-Lösung schon so nah ans Optimum (siehe Tabelle oben, 0,1% Lücke nach ILS auf den ursprünglich
+geprüften Instanzen), dass CP-SAT selbst bei großen Batches (n≈60, live getestet: 3 Batches, 1,3s
+Rechenzeit) keine kürzere Route mehr findet - der Wert der Politur liegt dann vor allem im NACHWEIS
+der Optimalität, nicht in einer tatsächlichen Verbesserung. Bei kleineren, weniger stark
+vor-optimierten Zwischenständen (z. B. direkt nach der Konstruktion) oder Ausreißer-Batches greift
+sie dagegen nachweislich (siehe Testfall mit bewusst schlechter Startroute unten).
+
+Sechs neue Tests: Korrektheit von `exact_tsp_single_batch` gegen Brute-Force, Einzel-/Leer-Batch-
+Sonderfälle, `apply_exact_tsp_polish` nie schlechter als die Eingabe, tatsächliche Verbesserung einer
+bewusst schlechten Startroute (echte Distanzen verifiziert, nicht angenommen), Einhaltung des
+Gesamt-Zeitbudgets. Live im Browser verifiziert: Button/Regler/Cooldown/Ergebnis-Anzeige in beiden
+Strategie-Tabs, Politur auf einer großen Instanz (3 Batches, bis ~60 Positionen), sowie die
+Ungültig-Erkennung bei geänderten Eingaben seit der letzten Politur.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
