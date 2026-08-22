@@ -34,6 +34,7 @@ from batch_local_search import (
     iterated_local_search_history,
     nearest_neighbor_route,
     perturb_batches,
+    reconcile_per_batch_histories,
     route_batch,
     two_opt_history,
 )
@@ -371,6 +372,78 @@ def test_inter_batch_search_final_step_is_two_opt_polished():
         _cand, found = find_two_opt_move(r, D)
         assert not found, "Finale Route sollte 2-opt-optimal sein (kein verbessernder Zug mehr)"
     assert final_total == pytest.approx(sum(route_distance(r, D) for r in final_routes))
+
+
+# ---------------------------------------------------------------------------
+# reconcile_per_batch_histories (Code-Review-Fund, 2026-08-22): app.py baut
+# die per-Batch-2opt-Animation unabhaengig per route_batch neu auf (fuer den
+# UI-Slider) - das kann einen ANDEREN, nicht so guten lokalen 2-opt-Optimum
+# treffen wie die verschachtelte Suche selbst, wodurch die angezeigte
+# "Laufdistanz" gegenueber dem tatsaechlichen Suchergebnis auseinanderlief.
+# ---------------------------------------------------------------------------
+
+def test_reconcile_per_batch_histories_appends_better_final_route():
+    import itertools
+
+    D = np.array([
+        [0.0, 1.0, 4.0, 1.0],
+        [1.0, 0.0, 1.0, 5.0],
+        [4.0, 1.0, 0.0, 1.0],
+        [1.0, 5.0, 1.0, 0.0],
+    ])
+    # Ueber alle Permutationen eines 3-Positionen-Batches die tatsaechlich
+    # (per route_distance, nicht per Handrechnung) kuerzeste und laengste
+    # ermitteln - garantiert eine echte, verifizierte Differenz statt
+    # geratener Werte.
+    perms = [list(p) for p in itertools.permutations([0, 1, 2])]
+    dists = [(perm, route_distance(perm, D)) for perm in perms]
+    worse_route, worse_dist = max(dists, key=lambda x: x[1])
+    better_route, better_dist = min(dists, key=lambda x: x[1])
+    assert better_dist < worse_dist, "Testvoraussetzung: es muss einen echten Unterschied geben"
+
+    per_batch_histories = [[(worse_route, worse_dist)]]
+    final_routes = [better_route]
+
+    reconciled = reconcile_per_batch_histories(per_batch_histories, final_routes, D)
+
+    assert reconciled[0][-1] == (better_route, better_dist)
+    assert reconciled[0][:-1] == per_batch_histories[0], "Urspruengliche Animation bleibt erhalten, nur ein Schritt wird angehaengt"
+
+
+def test_reconcile_per_batch_histories_leaves_history_unchanged_when_already_as_good():
+    D = np.array([
+        [0.0, 1.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0],
+    ])
+    per_batch_histories = [[([0, 1], route_distance([0, 1], D))]]
+    final_routes = [[0, 1]]  # identische Route, kein Grund zum Anhaengen
+
+    reconciled = reconcile_per_batch_histories(per_batch_histories, final_routes, D)
+
+    assert reconciled == per_batch_histories
+
+
+def test_ils_displayed_distance_matches_search_result_after_independent_route_rebuild():
+    # Regressionstest fuer den konkreten Code-Review-Fund: app.py baut die
+    # Routen fuer die UI unabhaengig per route_batch neu auf (fuer die volle
+    # 2opt-Animation) - ohne reconcile_per_batch_histories konnte die daraus
+    # summierte Distanz von iterated_local_search_history's eigenem
+    # Endergebnis abweichen (immer schlechter, nie besser).
+    orders, aisles, positions, _volumes = _sample_orders(n_orders=24, items_min=2, items_max=6, seed=1)
+    item_sizes = _positions_sizes(aisles)
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
+    capacity = 15
+    construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
+
+    history = iterated_local_search_history(construction, orders, capacity, item_sizes, D, seed=0)
+    final_batches, final_routes, final_total = history[-1]
+
+    per_batch_histories = [route_batch(b["items"], D) for b in final_batches]
+    per_batch_histories = reconcile_per_batch_histories(per_batch_histories, final_routes, D)
+    displayed_total = sum(h[-1][1] for h in per_batch_histories)
+
+    assert displayed_total == pytest.approx(final_total)
 
 
 def test_inter_batch_search_history_first_entry_matches_construction():

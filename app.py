@@ -53,7 +53,7 @@ from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME, CPSAT
 from batch_construction import greedy_seed_batching, singleton_batches, zone_clustering_batching
 from batch_evaluation import batch_capacity_excess, batch_capacity_size, capacity_summary_text, classify_comparison, distance_to_business, route_distance
 from batch_feedback import get_feedback_counts, log_feedback
-from batch_local_search import iterated_local_search_history, route_batch
+from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
 from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_presets import apply_preset, bounds, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
@@ -93,8 +93,15 @@ def _compute_solutions(_orders, _aisles, _positions, capacity, aisle_spacing, ai
     results = {}
     for key, construction, ils_seed in [("greedy", greedy_construction, 0), ("zone", zone_construction, 1)]:
         ib_history = iterated_local_search_history(construction, _orders, capacity, _item_sizes, _D, seed=ils_seed)
-        final_batches, _final_routes, _final_total = ib_history[-1]
+        final_batches, ib_final_routes, _final_total = ib_history[-1]
+        # route_batch baut jede Route für die 2-opt-Iterations-Slider-
+        # Animation von Grund auf neu auf und kann dabei einen ANDEREN,
+        # nicht zwingend so guten lokalen 2-opt-Optimum finden wie die
+        # verschachtelte Suche selbst (Code-Review-Fund, 2026-08-22 - siehe
+        # reconcile_per_batch_histories) - sonst liefe die angezeigte
+        # "Laufdistanz" gegenüber dem tatsächlichen Suchergebnis auseinander.
         per_batch_histories = [route_batch(b["items"], _D) for b in final_batches]
+        per_batch_histories = reconcile_per_batch_histories(per_batch_histories, ib_final_routes, _D)
         results[key] = (final_batches, per_batch_histories, ib_history)
 
     naive_histories = [route_batch(b["items"], _D) for b in naive_batches]

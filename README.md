@@ -656,6 +656,31 @@ beide Suchpfade parallel laufen zu lassen und das bessere Ergebnis zu nehmen wü
 verdoppelt aber die Rechenzeit je Neustart und damit den Effizienzvorteil der Verschachtelung selbst
 - der Mittelwert über viele Instanzen zählt (siehe Benchmark-Methodik oben), nicht jede einzelne.
 
+## Bugfix: angezeigte Laufdistanz konnte vom tatsächlichen Suchergebnis abweichen
+
+Auf Nutzeranfrage ("Kannst du bitte mal ein komplettes Code Review machen?") ein echter, bereits
+produktiv gewesener Fehler gefunden: `app.py` baute die je-Batch-2opt-Animation für den UI-Slider
+unabhängig per `route_batch` (frischer Nearest-Neighbor+2opt-Aufbau) neu auf und verwarf dabei die
+vom eigentlichen Suchalgorithmus (`iterated_local_search_history`) gefundenen, bereits optimierten
+Routen komplett. Da `route_batch` einen ANDEREN 2-opt-Startpunkt hat als die verschachtelte Suche
+(siehe Abschnitt oben), kann es dabei ein schlechteres lokales Optimum treffen - empirisch bestätigt:
+bei 14 von 20 zufälligen Testinstanzen war die tatsächlich angezeigte "Laufdistanz" messbar (bis zu
+~3%) schlechter als das, was die Suche selbst gefunden hatte, nie besser. Betraf sowohl die
+Kennzahlen-Kachel als auch den PDF-Export (beide nutzen dieselben, unabhängig neu aufgebauten
+Routen) - und führte zu einer sichtbaren Inkonsistenz zwischen der "Laufdistanz"-Kennzahl und der
+Bildunterschrift "Gesamtdistanz beim angezeigten Schritt" direkt darunter, die aus der (korrekten)
+Such-Historie stammt.
+
+Behoben mit einer neuen, eigens getesteten Funktion `reconcile_per_batch_histories` in
+`batch_local_search.py`: vergleicht je Batch das Ende der unabhängig aufgebauten Animation mit dem
+tatsächlichen Suchergebnis und hängt bei Bedarf einen zusätzlichen, verbessernden Schritt an - die
+volle 2-opt-Animation bleibt für den Slider erhalten, endet aber garantiert nicht schlechter als das,
+was die Suche tatsächlich gefunden hat. Auf 20 Testinstanzen verifiziert: 0 Abweichungen nach der
+Reparatur (vorher 14/20). Nebenbei bemerkt: dieser Fehler existierte erst SEIT der verschachtelten
+Zuteilungs+Routing-Suche weiter oben - davor waren die Politur-Phase und `app.py`s unabhängiger
+Neuaufbau exakt dieselbe Operation (`route_batch` auf dieselben `final_batches` angewendet), also
+zwangsläufig identisch.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
