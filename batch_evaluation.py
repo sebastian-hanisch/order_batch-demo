@@ -20,7 +20,10 @@ def route_distance(route, D):
     if not route:
         return 0.0
     nodes = [0] + [i + 1 for i in route] + [0]
-    return sum(D[nodes[k]][nodes[k + 1]] for k in range(len(nodes) - 1))
+    # D[a, b] statt D[a][b]: echtes 2D-Indexing statt erst eine Zeilen-
+    # Ansicht zu erzeugen und darin zu indizieren - spart bei der heissesten
+    # inneren Schleife der Inter-Batch-Suche messbar Zeit (siehe README).
+    return sum(D[nodes[k], nodes[k + 1]] for k in range(len(nodes) - 1))
 
 
 def batch_capacity_size(items, item_sizes):

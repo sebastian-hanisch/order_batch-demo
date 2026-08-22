@@ -260,6 +260,25 @@ dadurch auf ~4s statt ~17s - nur bei der ohnehin schon dokumentierten Extremkomb
 Regler gleichzeitig (siehe "Bewusst nicht enthalten" unten) dominiert weiterhin allein die
 unvermeidbare erste Konvergenz, die das Zeitbudget selbst nicht abkürzen kann.
 
+## Benchmark: Numpy-Indexierung als letzte, mechanische Optimierung
+
+Auf Nutzeranfrage ("fallen dir noch weitere Performance-Optimierungen ein?") drei Ideen geprüft,
+zwei davon verworfen, eine umgesetzt:
+
+- **Batch-Größen-Cache** (Kapazitätsauslastung je Batch inkrementell statt bei jedem Suchschritt
+  neu zu summieren): nur **1,08x** am Stresstest-Szenario - bei den hier üblichen Batch-Größen ist
+  die Summe schon so klein, dass sich der zusätzliche Code (eine weitere, synchron zu haltende
+  Cache-Liste) nicht lohnt. Nicht übernommen.
+- **Doppelte `route_batch`-Berechnung** (siehe vorheriger Abschnitt, bereits als vernachlässigbar
+  identifiziert): bestätigt bei 0,8% der Gesamtzeit, nicht übernommen.
+- **`D[a][b]` → `D[a, b]`** (echtes 2D-Indexing eines numpy-Arrays statt erst eine Zeilen-Ansicht
+  zu erzeugen und darin zu indizieren): **umgesetzt.** Mechanische Änderung ohne jede
+  Verhaltensänderung (identisches Ergebnis vor/nach dem Fix, per Test bestätigt), betrifft aber die
+  heißeste innere Schleife der gesamten App (`route_distance`, `_cheapest_insertion`,
+  `nearest_neighbor_route` - aufgerufen bei praktisch jeder Kandidatenbewertung in DLB, ILS und
+  2-opt). End-zu-Ende am Stresstest-Szenario: **2,15s → 1,86s (1,15x)**, im reinen
+  Distanz-Mikrobenchmark 1,33x.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

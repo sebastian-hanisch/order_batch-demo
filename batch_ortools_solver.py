@@ -126,7 +126,7 @@ def solve_with_cpsat(orders, capacity, item_sizes, D, num_batches, time_limit_s)
                 model.AddImplication(lit, node_active[b])
                 arcs.append((a, b, lit))
                 arc_lits[a, b] = lit
-                distance_terms.append(lit * int(round(D[a][b] * CPSAT_SCALE)))
+                distance_terms.append(lit * int(round(D[a, b] * CPSAT_SCALE)))
 
         model.AddCircuit(arcs)
         arc_lits_by_batch.append(arc_lits)

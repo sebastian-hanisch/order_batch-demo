@@ -72,7 +72,7 @@ def nearest_neighbor_route(item_indices, D):
     route = []
     current_node = 0  # Depot
     while unvisited:
-        nxt = min(unvisited, key=lambda i: D[current_node][i + 1])
+        nxt = min(unvisited, key=lambda i: D[current_node, i + 1])
         route.append(nxt)
         unvisited.discard(nxt)
         current_node = nxt + 1
@@ -139,7 +139,7 @@ def _cheapest_insertion(route, items_to_insert, D):
         best_delta, best_pos = None, 0
         for pos in range(len(current) + 1):
             a, b = nodes[pos], nodes[pos + 1]
-            delta = D[a][item + 1] + D[item + 1][b] - D[a][b]
+            delta = D[a, item + 1] + D[item + 1, b] - D[a, b]
             if best_delta is None or delta < best_delta:
                 best_delta, best_pos = delta, pos
         current = current[:best_pos] + [item] + current[best_pos:]
