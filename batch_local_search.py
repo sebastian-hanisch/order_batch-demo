@@ -418,27 +418,35 @@ def reconcile_per_batch_histories(per_batch_histories, final_routes, D):
     je Batch (typischerweise `route_batch` für die UI-2opt-Animation, siehe
     app.py) am tatsächlich BESTEN bekannten Ergebnis endet (`final_routes`,
     z. B. aus iterated_local_search_history/inter_batch_local_search_history)
-    - hängt bei Bedarf einen zusätzlichen, verbessernden Endschritt an.
+    - hängt bei Bedarf einen zusätzlichen Endschritt an, der exakt diese
+    Route zeigt.
 
     Grund (Code-Review-Fund, 2026-08-22): `route_batch` baut jede Route von
     Grund auf neu auf (Nearest-Neighbor + 2-opt) - ein ANDERER Startpunkt für
     2-opt als die bereits interleaved-optimierte Route aus der Suche selbst
     (siehe _try_move_or_two_opt/_apply_final_safety_net), der einen
-    schlechteren lokalen Optimum finden kann. Ohne diesen Abgleich lief die
-    im UI angezeigte Animation (und die daraus abgeleitete "Laufdistanz"-
-    Kennzahl) am Ende leicht auseinander mit dem tatsächlichen Suchergebnis
-    - empirisch bestätigt: bei 14 von 20 zufälligen Testinstanzen war die
-    unabhängig aufgebaute Route messbar (bis zu ~3%) schlechter, nie besser.
-    `final_routes` ist bereits per `_apply_final_safety_net` gegen genau
-    diesen Fall abgesichert (route_distance(final_routes[i]) <= eine frische
-    route_batch-Rekonstruktion, per Konstruktion), diese Funktion sorgt nur
-    dafür, dass eine SEPARAT aufgebaute Animation dieselbe Garantie am Ende
-    zeigt."""
+    schlechteren lokalen Optimum finden kann. `final_routes` ist bereits per
+    `_apply_final_safety_net` gegen genau diesen Fall abgesichert
+    (route_distance(final_routes[i]) <= eine frische route_batch-
+    Rekonstruktion, per Konstruktion) - diese Funktion sorgt dafür, dass
+    eine SEPARAT aufgebaute Animation dasselbe Ergebnis am Ende zeigt.
+
+    Vergleicht bewusst die ROUTE selbst, nicht nur ihre Distanz (zweiter
+    Code-Review-Fund, 2026-08-22): zwei unterschiedliche Reihenfolgen können
+    dieselbe Distanz ergeben (Gleichstand) - ein reiner Distanzvergleich
+    (`dist < history[-1][1] - EPS`) hätte solche Gleichstände unangetastet
+    gelassen, wodurch dieselbe Batch-Route in der "Batch-Zuteilung
+    optimieren"-Übersicht (zeigt `final_routes` direkt) und in "Batch im
+    Detail" (zeigt diese Historie) unterschiedlich aussehen konnte, obwohl
+    beide gleich kurz waren - empirisch bestätigt: 80 von 142 zufällig
+    geprüften Batches betroffen. Da `final_routes[i]` nie schlechter als
+    `history[-1]` ist (siehe oben), ist ein reiner Routen-Vergleich hier
+    sicher und günstig genug (kein zusätzlicher route_distance-Aufruf, wenn
+    schon identisch)."""
     reconciled = []
     for history, route in zip(per_batch_histories, final_routes):
-        dist = route_distance(route, D)
-        if dist < history[-1][1] - EPS:
-            history = history + [(route, dist)]
+        if route != history[-1][0]:
+            history = history + [(route, route_distance(route, D))]
         reconciled.append(history)
     return reconciled
 

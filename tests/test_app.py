@@ -426,6 +426,33 @@ def test_reconcile_per_batch_histories_leaves_history_unchanged_when_already_as_
     assert reconciled == per_batch_histories
 
 
+def test_reconcile_per_batch_histories_replaces_tied_route_with_different_geometry():
+    # Regressionstest fuer den zweiten Code-Review-Fund: zwei verschiedene
+    # Reihenfolgen mit EXAKT derselben Distanz (Gleichstand) - ein reiner
+    # Distanzvergleich haette das faelschlich als "schon gut genug"
+    # behandelt und die abweichende Route unangetastet gelassen, wodurch
+    # Uebersicht und Detailansicht fuer denselben Batch unterschiedlich
+    # aussehen konnten.
+    D = np.array([
+        [0.0, 1.0, 1.0, 1.0],
+        [1.0, 0.0, 2.0, 1.0],
+        [1.0, 2.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0, 0.0],
+    ])
+    route_a = [0, 1, 2]
+    route_b = [1, 0, 2]
+    dist_a, dist_b = route_distance(route_a, D), route_distance(route_b, D)
+    assert route_a != route_b
+    assert dist_a == pytest.approx(dist_b), "Testvoraussetzung: echter Gleichstand, keine Verbesserung"
+
+    per_batch_histories = [[(route_a, dist_a)]]
+    final_routes = [route_b]
+
+    reconciled = reconcile_per_batch_histories(per_batch_histories, final_routes, D)
+
+    assert reconciled[0][-1] == (route_b, dist_b), "final_routes gewinnt auch bei Gleichstand, damit beide Ansichten uebereinstimmen"
+
+
 def test_ils_displayed_distance_matches_search_result_after_independent_route_rebuild():
     # Regressionstest fuer den konkreten Code-Review-Fund: app.py baut die
     # Routen fuer die UI unabhaengig per route_batch neu auf (fuer die volle

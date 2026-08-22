@@ -681,6 +681,19 @@ Zuteilungs+Routing-Suche weiter oben - davor waren die Politur-Phase und `app.py
 Neuaufbau exakt dieselbe Operation (`route_batch` auf dieselben `final_batches` angewendet), also
 zwangsläufig identisch.
 
+**Nachtrag (auf Nutzerhinweis "Die Gesamtvisualisierung scheint von der Einzelbatchvisualisierung
+abzuweichen!?"):** der erste Fix verglich nur die DISTANZ (`dist < history[-1][1] - EPS`), nicht die
+Route selbst. Zwei unterschiedliche Reihenfolgen können aber exakt dieselbe Distanz ergeben
+(Gleichstand) - ein reiner Distanzvergleich ließ solche Gleichstände unangetastet, wodurch dieselbe
+Batch-Route im "Batch-Zuteilung optimieren"-Übersichtsplot (zeigt das Suchergebnis direkt) und in
+"Batch im Detail" (zeigt die unabhängig aufgebaute Animation) unterschiedlich AUSSEHEN konnte, obwohl
+beide exakt gleich kurz waren. Empirisch bestätigt: **80 von 142 zufällig geprüften Batches
+betroffen** - deutlich mehr als die 14/20 der ursprünglichen, reinen Distanz-Abweichung. Da das
+Suchergebnis nachweislich nie schlechter als die unabhängige Rekonstruktion ist (siehe oben), genügt
+jetzt ein reiner Routen-Vergleich (`route != history[-1][0]`) - sicher und ohne Distanzberechnung im
+Normalfall. Live im Browser verifiziert: die Routen-Koordinaten des Übersichts- und des
+Detail-Plots stimmen jetzt exakt überein (per direktem Vergleich der Plotly-Figurdaten).
+
 ## UX: Batch-Farben in Übersicht und Detailansicht waren inkonsistent
 
 Auf Nutzeranfrage nach Verbesserungen an der Visualisierung geprüft und gefunden:
