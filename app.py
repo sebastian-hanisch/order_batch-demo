@@ -605,24 +605,23 @@ Sweep-Algorithmus der Tourenplanung-Demo, nur entlang der Gänge statt um ein De
 sie in dieser Reihenfolge First-Fit in Batches. Bestellungen im selben Lagerbereich landen
 dadurch bevorzugt im selben Batch, was Gangwechsel reduziert.
 
-**2-opt-Verbesserung je Batch:** Sobald die Bestellungen einem Batch zugeteilt sind, ist die
-Reihenfolge, in der die Positionen abgelaufen werden, noch offen - ein eigenständiges kleines
-Rundreiseproblem je Batch. Eine Nearest-Neighbor-Konstruktion liefert eine erste Route, die
-anschließend per 2-opt so lange verbessert wird, bis kein Tausch mehr die Distanz senkt (ein
-lokales Optimum). Anders als die Batch-Bildung selbst kann dieser Schritt das Ergebnis nie
-verschlechtern, nur verbessern oder gleich lassen.
-
-**Inter-Batch-Lokalsuche:** Auf Nutzeranfrage ergänzt, nachdem ein Benchmark gegen das echte
-Optimum (Vollenumeration auf winzigen Instanzen) zeigte, dass Greedy-Seed/Zonen-Sweep trotz
-eigener 2-opt-Politur im Schnitt noch 8-10% zurückliegen - die 2-opt-Verbesserung optimiert nur
-die Route INNERHALB eines Batches, die Zuteilung der Bestellungen zu Batches blieb danach
-unangetastet. Die Inter-Batch-Suche verschiebt (Relocate) oder tauscht (Swap) Bestellungen
-zwischen Batches, wenn das die Gesamtdistanz senkt, bis keine der beiden Nachbarschaften mehr
-eine Verbesserung findet - Kandidaten werden dabei per Don't-Look-Bits ausgewählt (eine
+**Verschachtelte Zuteilungs- und Routen-Suche:** Nach der ersten Batch-Bildung ist noch zweierlei
+offen: welche Bestellungen zusammen in einem Batch landen, UND in welcher Reihenfolge ein Batch
+seine Positionen abläuft (ein eigenständiges kleines Rundreiseproblem je Batch). Auf Nutzeranfrage
+ergänzt, nachdem ein Benchmark gegen das echte Optimum (Vollenumeration auf winzigen Instanzen)
+zeigte, dass Greedy-Seed/Zonen-Sweep allein im Schnitt noch 8-10% zurückliegen: eine Inter-Batch-
+Suche verschiebt (Relocate) oder tauscht (Swap) Bestellungen zwischen Batches, wenn das die
+Gesamtdistanz senkt - VERSCHACHTELT mit 2-opt-Zügen auf den einzelnen Batch-Routen, statt beides
+nacheinander abzuarbeiten. Ein Batch gilt erst dann als "fertig", wenn WEDER eine bessere Zuteilung
+NOCH eine bessere Route mehr gefunden wird. Grund für die Verschachtelung: bewertet man Zuteilungs-
+Entscheidungen anhand einer noch nicht routenoptimierten Distanz, können suboptimale Entscheidungen
+entstehen - derselbe Grundgedanke wie bei Won & Olafsson (2005), "Joint order batching and order
+picking in warehouse operations". Kandidaten werden dabei per Don't-Look-Bits ausgewählt (eine
 Warteschlange "auffälliger" Batches statt eines vollen Rescans bei jeder Iteration), was bei
 größeren Instanzen bis zu 3x schneller ist, ohne das Ergebnis systematisch zu verschlechtern. Im
-selben Benchmark sank der Abstand zum Optimum dadurch auf 0,1%; auf realistischen Instanzgrößen
-ergaben sich 8-18% kürzere Gesamtdistanz (Details siehe README).
+Optimum-Benchmark sank der Abstand dadurch auf 0,1%; auf realistischen Instanzgrößen ergaben sich
+insgesamt rund 19-26% kürzere Gesamtdistanz gegenüber reiner Konstruktion ohne jede Verbesserung
+(Details siehe README).
 
 **Iterated Local Search:** Reine Lokalsuche stoppt beim ERSTEN lokalen Optimum und kann es nicht
 wieder verlassen. Auf Nutzeranfrage ergänzt: nach Erreichen eines lokalen Optimums wird gezielt
@@ -630,18 +629,23 @@ gestört (ein paar zufällige, zulässige Bestellungen werden verschoben, auch w
 verschlechtert) und danach erneut bis zum lokalen Optimum optimiert - wiederholt, solange ein
 Zeitbudget reicht, das beste je gefundene Ergebnis wird behalten. Bei kleinen Instanzen passen so
 viele Dutzend Neustarts in das Budget, bei großen (wo schon ein einzelner Durchlauf teuer ist) nur
-wenige - das Zeitbudget skaliert sich also automatisch mit der Instanzgröße. Ergebnis: durchweg
-1-4,8% kürzere Distanz auf realistischen Instanzgrößen, der erste Hebel seit der ursprünglichen
-Inter-Batch-Suche, der einen konsistenten zusätzlichen Gewinn brachte (im Gegensatz zu den zuvor
-geprüften Konstruktions-/Clustering-Alternativen, siehe README).
+wenige - das Zeitbudget skaliert sich also automatisch mit der Instanzgröße. Welches Ziel-Batch eine
+verschobene Bestellung bekommt, wird dabei nicht rein zufällig gewählt, sondern per UCB1 (eine
+Bandit-Explorationsstrategie aus dem Reinforcement-Learning-Bereich, Auer et al. 2002): jede
+(Bestellung, Ziel)-Kombination bekommt einen Score aus bisheriger Erfolgsrate plus einem
+Unsicherheits-Bonus für wenig ausprobierte Kombinationen. Ergebnis: durchweg kürzere Distanz auf
+realistischen Instanzgrößen (Details zu beiden Erweiterungen und den zahlreichen geprüften, aber
+wieder verworfenen Alternativen - u. a. Tabu Search, Simulated Annealing, Ant/Bee-Colony-Ideen -
+siehe README).
 
 **Exakter Solver (CP-SAT):** Auf Nutzeranfrage ergänzt, um kleine Instanzen exakt lösen und mit
-den eigenen Heuristiken vergleichen zu können. Anders als Greedy-Seed/Zonen-Sweep + Inter-Batch-
-Suche (Zuteilung erst, Route danach) löst CP-SAT Zuteilung UND Route in einem einzigen Modell
-gemeinsam: Zuordnungsvariablen je Bestellung/Batch plus ein echter Hamiltonkreis (`AddCircuit`)
-je Batch-Slot über Depot und alle Positionen, wobei nicht zugeteilte Positionen per Selbstschleife
-übersprungen werden. Ein erster Versuch mit der (eigentlich naheliegenderen) OR-Tools-Routing-
-Bibliothek scheiterte an einer echten Absturzgefahr (Segfault) bei bestimmten Konstruktions-
+den eigenen Heuristiken vergleichen zu können. CP-SAT löst Zuteilung UND Route in einem einzigen,
+gemeinsam gelösten Modell: Zuordnungsvariablen je Bestellung/Batch plus ein echter Hamiltonkreis
+(`AddCircuit`) je Batch-Slot über Depot und alle Positionen, wobei nicht zugeteilte Positionen per
+Selbstschleife übersprungen werden - ein grundsätzlich anderer Lösungsweg als die oben beschriebene
+Suche, die sich schrittweise über viele lokale Züge einer guten Lösung annähert, statt sie in einem
+Zug als Ganzes zu modellieren. Ein erster Versuch mit der (eigentlich naheliegenderen) OR-Tools-
+Routing-Bibliothek scheiterte an einer echten Absturzgefahr (Segfault) bei bestimmten Konstruktions-
 heuristiken und an mangelnder Robustheit bei Bestellungen mit mehr als 2-3 Positionen - Details
 dazu im Modul-Docstring von `batch_ortools_solver.py` und im README. Da CP-SAT für den vollen
 Suchraum exponentiell viele Möglichkeiten prüfen müsste, ist es nur für kleine Instanzen sinnvoll
@@ -696,9 +700,10 @@ Sinn), und **in welcher Reihenfolge** die Positionen eines Batches abgelaufen we
 Traveling-Salesman-Problem je Batch, ebenfalls NP-schwer). Beide Entscheidungen beeinflussen sich
 gegenseitig: welche Gruppierung eine kurze Route ermöglicht, hängt von den Positionen der
 beteiligten Bestellungen ab - eine gemeinsame exakte Lösung ist bei realistischen
-Instanzgrößen praktisch nicht mehr berechenbar, weshalb beide hier implementierten Strategien das
-Problem bewusst in zwei Schritten angehen: erst gruppieren (Greedy-Seed bzw. Zonen-Sweep), dann
-je Batch routen (Nearest-Neighbor + 2-opt).
+Instanzgrößen praktisch nicht mehr berechenbar. Die erste Gruppierung entsteht deshalb konstruktiv
+in einem separaten ersten Schritt (Greedy-Seed bzw. Zonen-Sweep); die anschließende lokale Suche
+verfeinert Zuteilung UND Route dagegen VERSCHACHTELT (siehe unten), statt beide Entscheidungen
+strikt nacheinander zu optimieren.
 
 **2-opt-Nachbarschaft je Batch:** Für eine feste Route $R$ eines Batches entsteht durch Umkehren
 eines Teilstücks $[i, j]$ eine benachbarte Route $R'$. Ein Zug wird ausgeführt, wenn er die
@@ -708,31 +713,34 @@ Batch-Distanz senkt:
     st.latex(r"\text{Kosten}(R') < \text{Kosten}(R)")
     st.markdown(
         r"""
-Wiederholt bis kein verbessernder Zug mehr existiert - ein **lokales** Optimum bezüglich dieser
-Nachbarschaftsstruktur je Batch, keine Garantie für die global kürzeste Route innerhalb des
-Batches und erst recht keine Garantie für die global beste Batch-Aufteilung insgesamt (dafür
-müsste auch die Gruppierung selbst Teil der lokalen Suche sein).
+**Inter-Batch-Nachbarschaft:** Ergänzt um Relocate- und Swap-Nachbarschaft zwischen zwei Batches
+$u, v$: Relocate verschiebt eine Bestellung $o \in B_u$ nach $B_v$ (zulässig, wenn
+$\sum_{i \in P_o} s_i + \sum_{o' \in B_v} \sum_{i \in P_{o'}} s_i \leq Q$ gilt), Swap tauscht je
+eine Bestellung $o_u \in B_u$ und $o_v \in B_v$. Ein Zug wird ausgeführt, wenn er die Summe der
+beiden betroffenen Batch-Distanzen senkt - aus Performance-Gründen bewertet anhand einer
+Cheapest-Insertion-Einfügung in die bestehende Route statt eines vollen Neu-Routings je Kandidat
+(Details und die Benchmark-Zahlen dazu in `batch_local_search.py` und im README). Diese
+Nachbarschaft verbessert genau die Einschränkung, die die reine 2-opt-Suche offen lässt: sie kann
+die Batch-ZUTEILUNG selbst verändern, nicht nur die Route innerhalb eines Batches.
 
-**Inter-Batch-Nachbarschaft:** Genau diese Erweiterung übernehmen die Relocate- und
-Swap-Nachbarschaft zwischen zwei Batches $u, v$: Relocate verschiebt eine Bestellung $o \in B_u$
-nach $B_v$ (zulässig, wenn $\sum_{i \in P_o} s_i + \sum_{o' \in B_v} \sum_{i \in P_{o'}} s_i \leq Q$
-gilt), Swap tauscht je eine Bestellung $o_u \in B_u$ und $o_v \in B_v$. Ein Zug wird ausgeführt,
-wenn er die Summe der beiden betroffenen Batch-Distanzen senkt - aus Performance-Gründen
-bewertet anhand einer Cheapest-Insertion-Einfügung in die bestehende Route statt eines vollen
-Neu-Routings je Kandidat (Details und die Benchmark-Zahlen dazu in `batch_local_search.py` und
-im README). Diese Nachbarschaft verbessert genau die Einschränkung, die die reine 2-opt-Suche
-offen lässt: sie kann die Batch-ZUTEILUNG selbst verändern, nicht nur die Route innerhalb eines
-Batches.
+**Verschachtelung statt Reihenfolge:** Beide Nachbarschaften laufen nicht unabhängig nacheinander,
+sondern gemeinsam: ein Batch gilt erst dann als "fertig", wenn WEDER die 2-opt- NOCH die
+Inter-Batch-Nachbarschaft noch einen verbessernden Zug findet. Der Grund: würde man erst bis zum
+2-opt-Optimum routen und danach unangetastet die Inter-Batch-Suche starten (wie ursprünglich
+umgesetzt), würden Zuteilungs-Kandidatenzüge anhand noch nicht routenoptimierter Distanzen bewertet
+- das kann zu suboptimalen Zuteilungsentscheidungen führen (empirisch bestätigt, siehe README). Das
+Ergebnis ist ein **lokales** Optimum bezüglich der VEREINIGTEN Nachbarschaftsstruktur, weiterhin
+ohne Garantie für die global beste Lösung.
 
-**Grenze reiner Lokalsuche:** Sowohl 2-opt als auch die Inter-Batch-Nachbarschaft stoppen beim
-ERSTEN lokalen Optimum ihrer jeweiligen Nachbarschaftsstruktur - es gibt keinen Mechanismus, es
-wieder zu verlassen, selbst wenn ein besseres lokales Optimum nur einen ungünstigen Zwischenschritt
-entfernt läge. Iterated Local Search adressiert genau das: eine Störung $p$ (ein paar zufällige,
-zulässige Relocates) erzeugt aus einer Lösung $\pi$ eine benachbarte Startlösung $p(\pi)$, auf die
-erneut die Inter-Batch-Lokalsuche angewendet wird. Wiederholt für ein Zeitbudget statt eine feste
-Anzahl Wiederholungen, das beste je gefundene $\pi^*$ wird behalten - eine einfache, aber in der
-Metaheuristik-Literatur gut etablierte Form der Diversifikation (Lourenço, Martin & Stützle 2003),
-ohne die Zusatzkomplexität einer vollständigen Metaheuristik wie Simulated Annealing oder Tabu
+**Grenze reiner Lokalsuche:** Auch die vereinigte Nachbarschaft stoppt beim ERSTEN lokalen Optimum
+- es gibt keinen Mechanismus, es wieder zu verlassen, selbst wenn ein besseres lokales Optimum nur
+einen ungünstigen Zwischenschritt entfernt läge. Iterated Local Search adressiert genau das: eine
+Störung $p$ (ein paar zufällige, zulässige Relocates) erzeugt aus einer Lösung $\pi$ eine
+benachbarte Startlösung $p(\pi)$, auf die erneut die verschachtelte Suche angewendet wird.
+Wiederholt für ein Zeitbudget statt eine feste Anzahl Wiederholungen, das beste je gefundene
+$\pi^*$ wird behalten - eine einfache, aber in der Metaheuristik-Literatur gut etablierte Form der
+Diversifikation (Lourenço, Martin & Stützle 2003), ohne die Zusatzkomplexität einer vollständigen
+Metaheuristik wie Simulated Annealing oder Tabu
 Search.
 """
     )
