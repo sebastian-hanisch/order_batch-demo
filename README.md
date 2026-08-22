@@ -347,7 +347,7 @@ Suche selbst (Cheapest-Insertion-Bewertungen), nicht in der abschließenden Poli
 Trotzdem umgesetzt: mechanisch, ohne jede Verhaltensänderung (identische Ergebnisse vor/nach dem
 Fix), kein Nachteil irgendwo - dieselbe Kategorie wie die Numpy-Indexierung weiter oben.
 
-## Benchmark: neun Metaheuristik-Varianten geprüft, keine schlägt die aktuelle Konfiguration
+## Benchmark: zehn Metaheuristik-Varianten geprüft, keine schlägt die aktuelle Konfiguration
 
 Nach den Performance-Runden auf Nutzeranfrage die Qualitätsseite noch einmal geprüft: taugt eine
 andere ILS-Akzeptanzregel oder eine andere Störung als das aktuelle "Better"-Kriterium (jeder
@@ -470,12 +470,64 @@ Auswahl sorgt für Streuung, welche Bestellung über verschiedene Neustarts hinw
 "immer die teuerste zuerst" verengt diese Vielfalt und probiert über viele Neustarts hinweg tendenziell
 ähnliche Züge, statt den Suchraum breiter abzudecken. Keine der drei Varianten übernommen.
 
-Fazit nach neun geprüften Metaheuristik-Varianten (vier ILS-Akzeptanz-/Störungsvarianten, zwei
-grundsätzlich andere Paradigmen als Vollersatz - Tabu Search, ALNS -, plus drei dosierte
-Kombinationen derselben Ideen): die aktuelle Kombination aus Greedy-Seed/Zonen-Sweep-Konstruktion,
-warmgestarteter ILS+DLB-Suche, "Better"-Akzeptanz und reiner, zufälliger Relocate-Störung ist für
-dieses Problem bemerkenswert robust getroffen - praktisch jede Verfeinerung, ob aggressiv oder
-vorsichtig dosiert, schneidet beim größten, praktisch wichtigsten Stresstest-Szenario schlechter ab.
+Auf Nachfrage, ob auch schwarmbasierte Verfahren (Ant Colony, Bee Colony) etwas beitragen könnten:
+Ant Colony passt strukturell schlecht auf die Batch-ZUTEILUNG (lebt von schrittweiser
+Pfadkonstruktion wie bei TSP-Routing, wofür es hier keine vergleichbare Struktur gibt) und würde auf
+Routing-Ebene dieselbe Wand treffen wie die Clustering-Versuche (die kleinen Routing-Teilprobleme
+werden bereits durch 2-opt nahezu optimal gelöst). Bee Colony ist strukturell populationsbasiert -
+würde das ohnehin knappe Neustart-Budget der großen Instanz auf mehrere parallele Lösungen verteilen,
+derselbe Mechanismus, der Tabu Search und ALNS dort das Genick gebrochen hat. Als dosierte,
+ACO-inspirierte Idee stattdessen geprüft: **Pheromon-gewichtete Zielwahl** - statt das Ziel-Batch
+für eine verschobene Bestellung in `perturb_batches` rein zufällig zu wählen, ein leichtes
+Pheromon-Gewicht je (Bestellung, Batch)-Paar mitführen (verstärkt nach erfolgreichen Neustarts,
+verdunstet jeden Neustart) und die Zielwahl probabilistisch danach gewichten - anders als die
+gescheiterte Worst-Order-Auswahl mit eingebauter Exploration durch Verdunstung, und genauso billig
+pro Neustart wie die Baseline (kein Restart-Budget-Konflikt wie bei Tabu Search/ALNS).
+
+| Szenario | Baseline | Pheromon-Zielwahl |
+|---|---|---|
+| 24 Bestellungen | 1891 | 1874 (+0,90%) |
+| 30 Bestellungen | 2435 | 2499 (−2,61%) |
+| 80 Bestellungen, Kapazität 60 | 2867 | 3007 (−4,86%) |
+
+Bemerkenswert: obwohl diese Variante genauso billig wie die Baseline ist (keine zusätzliche
+Berechnung pro Neustart, das "zu wenig Neustarts passen ins Budget"-Argument von Tabu Search/ALNS
+greift also nicht), verliert sie beim großen Szenario fast identisch stark. Nicht die Kosten einer
+Verfeinerung scheinen das Problem zu sein, sondern dass jede systematische Verzerrung der
+Zufallsauswahl - selbst eine milde, durch Verdunstung regulierte - die Explorationsbreite genau in
+dem Maß einschränkt, das bei größeren Instanzen etwas kostet.
+
+**Methodische Nachprüfung (auf Nutzeranfrage: "hast du mal mehrere Szenarien getestet, nicht dass
+das Ausreißer sind?"):** berechtigter Einwand - alle zehn bisherigen Vergleiche liefen gegen JEWEILS
+EINE FESTE Szenario-Instanz je Größe, nur der algorithmus-eigene Zufalls-Seed wurde variiert, nicht
+das zugrundeliegende Lagerlayout/die Bestellungen selbst. Nachgeprüft mit der Pheromon-Zielwahl
+(billigster, fairster direkter Vergleich) über 3 UNABHÄNGIGE Szenario-Instanzen je Größe:
+
+| Größe | Mittel über 3 Instanzen | Streuung über die Instanzen |
+|---|---|---|
+| 24 Bestellungen | +0,45% | −1,22% bis +2,10% |
+| 30 Bestellungen | −0,36% | −1,99% bis +0,58% |
+| 80 Bestellungen, Kapazität 60 | **−3,06%** | −1,35% bis −4,70% (durchweg negativ) |
+
+Ergebnis: bei 24/30 Bestellungen war das bisherige Bild (z. B. die wiederholt beobachteten "−2,61%"
+bei 30 Bestellungen) ein Artefakt der EINEN genutzten Instanz - über mehrere unabhängige Instanzen
+gemittelt liegt die Streuung ZWISCHEN Instanzen in derselben Größenordnung wie die gemeldeten
+Unterschiede selbst, also im Rauschen. Beim großen Stresstest-Szenario dagegen bleibt der negative
+Befund robust - alle drei unabhängigen Instanzen zeigen ein Minus, auch wenn die genaue Höhe
+schwankt (−1,35% bis −4,70%). **Der Kernbefund hält also:** die aktuelle Konfiguration ist speziell
+bei der großen, praktisch wichtigsten Instanzgröße robust schwer zu schlagen - aber die genauen
+Prozentzahlen bei kleinen/mittleren Instanzen aus der gesamten vorangegangenen Untersuchung (alle
+neun anderen Varianten oben) beruhen auf einer einzelnen Instanz und sollten dort mit Vorsicht
+behandelt werden, nicht als verlässliche Punktschätzung.
+
+Fazit nach zehn geprüften Metaheuristik-Varianten (vier ILS-Akzeptanz-/Störungsvarianten, zwei
+grundsätzlich andere Paradigmen als Vollersatz - Tabu Search, ALNS -, vier dosierte Kombinationen
+derselben Ideen einschließlich der Pheromon-Zielwahl): die aktuelle Kombination aus
+Greedy-Seed/Zonen-Sweep-Konstruktion, warmgestarteter ILS+DLB-Suche, "Better"-Akzeptanz und reiner,
+zufälliger Relocate-Störung ist für dieses Problem robust getroffen - speziell beim größten,
+praktisch wichtigsten Stresstest-Szenario schneidet über mehrere unabhängige Instanzen bestätigt
+jede getestete Verfeinerung schlechter ab, während die Unterschiede bei kleinen/mittleren Instanzen
+größtenteils im Rauschen liegen.
 
 ## Zwei Kapazitätsarten statt einer fixen
 
