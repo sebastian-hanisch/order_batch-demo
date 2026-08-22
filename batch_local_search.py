@@ -60,6 +60,8 @@ import random
 import time
 from collections import deque
 
+import numpy as np
+
 from batch_constants import EPS, ILS_MAX_RESTARTS, ILS_PERTURB_STRENGTH, ILS_TIME_BUDGET_S, LOCAL_SEARCH_MAX_MOVES
 from batch_evaluation import route_distance
 
@@ -132,16 +134,21 @@ def _cheapest_insertion(route, items_to_insert, D):
     """Fügt Positionen sequenziell an ihrer jeweils günstigsten Stelle in
     eine BESTEHENDE Route ein (Cheapest-Insertion), statt die Route von
     Grund auf neu zu konstruieren - siehe Modul-Docstring für die
-    Performance-Begründung."""
+    Performance-Begründung.
+
+    Die Suche nach der günstigsten Einfügeposition ist numpy-vektorisiert
+    (alle Kandidatenpositionen auf einmal statt Python-Schleife) statt eine
+    Python-Schleife über alle Kandidatenpositionen - bei der Standard-
+    Batch-Kapazität ein Wash, wächst aber mit der Kapazität: 1.14x bei
+    Kapazität 30, 1.38x bei Kapazität 60 im End-zu-Ende-Stresstest (siehe
+    README) - genau der Randfall mit den Regler-Maximalwerten, der ohnehin
+    schon als Risikozone dokumentiert ist."""
     current = list(route)
     for item in items_to_insert:
-        nodes = [0] + [i + 1 for i in current] + [0]
-        best_delta, best_pos = None, 0
-        for pos in range(len(current) + 1):
-            a, b = nodes[pos], nodes[pos + 1]
-            delta = D[a, item + 1] + D[item + 1, b] - D[a, b]
-            if best_delta is None or delta < best_delta:
-                best_delta, best_pos = delta, pos
+        nodes = np.array([0] + [i + 1 for i in current] + [0])
+        a, b = nodes[:-1], nodes[1:]
+        deltas = D[a, item + 1] + D[item + 1, b] - D[a, b]
+        best_pos = int(deltas.argmin())
         current = current[:best_pos] + [item] + current[best_pos:]
     return current
 
@@ -246,26 +253,32 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
     return batches, routes, dists, False, set()
 
 
-def _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves=LOCAL_SEARCH_MAX_MOVES):
-    """Reine Inter-Batch-Lokalsuche bis zum lokalen Optimum, per Don't-Look-
-    Bits (Bentley 1992): eine Warteschlange "auffälliger" (seit der letzten
-    Prüfung veränderter) Batches statt bei jeder Iteration wieder bei Batch 0
-    von vorn zu beginnen. Ein Batch verlässt die Warteschlange, sobald von
-    ihm aus kein verbessernder Zug mehr gefunden wird, und kommt erst
-    zurück, wenn ein SPÄTERER Zug ihn tatsächlich verändert. OHNE
-    abschließende 2-opt-Politur (siehe inter_batch_local_search_history /
-    iterated_local_search_history, die diese Funktion als billigen Kern
-    verwenden - eine Politur bei jedem Iterated-Local-Search-Neustart wäre
-    verschwendete Rechenzeit für Zwischenergebnisse, die am Ende doch
-    verworfen werden)."""
+def _inter_batch_search_dlb_from_state(batches, routes, dists, orders, capacity, item_sizes, D, active_init, max_moves=LOCAL_SEARCH_MAX_MOVES):
+    """Kern der Don't-Look-Bits-Suche (Bentley 1992): eine Warteschlange
+    "auffälliger" Batches statt bei jeder Iteration wieder bei Batch 0 von
+    vorn zu beginnen. Ein Batch verlässt die Warteschlange, sobald von ihm
+    aus kein verbessernder Zug mehr gefunden wird, und kommt erst zurück,
+    wenn ein SPÄTERER Zug ihn tatsächlich verändert.
+
+    Nimmt Routen/Distanzen und die Start-Warteschlange als vorgegebenen
+    Zustand entgegen, statt sie selbst aus den Batches heraus neu
+    aufzubauen - das ermöglicht einen WARM START (siehe
+    iterated_local_search_history): nach einer kleinen, gezielten Störung
+    müssen nur die tatsächlich betroffenen Batches neu geprüft werden, nicht
+    die komplette Lösung. `_inter_batch_search_dlb` (Kaltstart: alle Batches
+    aktiv, Routen frisch aus den Items aufgebaut) ist der Sonderfall
+    active_init=alle Batches. OHNE abschließende 2-opt-Politur (siehe
+    inter_batch_local_search_history / iterated_local_search_history, die
+    diese Funktion als billigen Kern verwenden - eine Politur bei jedem
+    Iterated-Local-Search-Neustart wäre verschwendete Rechenzeit für
+    Zwischenergebnisse, die am Ende doch verworfen werden)."""
     current_batches = [dict(b) for b in batches]
-    current_routes = [nearest_neighbor_route(b["items"], D) for b in current_batches]
-    current_dists = [route_distance(r, D) for r in current_routes]
+    current_routes = list(routes)
+    current_dists = list(dists)
     history = [(current_batches, list(current_routes), sum(current_dists))]
 
-    n = len(current_batches)
-    active = deque(range(n))
-    in_active = set(range(n))
+    active = deque(active_init)
+    in_active = set(active_init)
     moves = 0
 
     while active and moves < max_moves:
@@ -285,6 +298,17 @@ def _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves=
                 in_active.add(b)
 
     return history
+
+
+def _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves=LOCAL_SEARCH_MAX_MOVES):
+    """Reine Inter-Batch-Lokalsuche bis zum lokalen Optimum, Kaltstart: baut
+    Nearest-Neighbor-Routen für ALLE Batches frisch auf und startet mit
+    allen Batches in der Warteschlange. Siehe
+    _inter_batch_search_dlb_from_state für den Warm-Start-Fall (ILS-
+    Neustarts)."""
+    routes = [nearest_neighbor_route(b["items"], D) for b in batches]
+    dists = [route_distance(r, D) for r in routes]
+    return _inter_batch_search_dlb_from_state(batches, routes, dists, orders, capacity, item_sizes, D, range(len(batches)), max_moves)
 
 
 def _polish_final_batches(batches, D):
@@ -315,8 +339,21 @@ def perturb_batches(batches, orders, capacity, item_sizes, rng, n_moves=ILS_PERT
     (noch passenden) Batch - OHNE Bewertung, auch wenn das die Distanz
     kurzfristig verschlechtert. Diversifikation für Iterated Local Search:
     ohne eine solche Störung würde die nachfolgende Lokalsuche immer wieder
-    im selben lokalen Optimum landen, aus dem sie gestartet ist."""
+    im selben lokalen Optimum landen, aus dem sie gestartet ist.
+
+    Gibt zusätzlich zurück, WELCHE Batch-Indizes tatsächlich verändert
+    wurden (für den Warm-Start in iterated_local_search_history: nur diese
+    Batches müssen nach der Störung neu geprüft werden, alle anderen
+    übernehmen ihre Route/Distanz unverändert aus der vorherigen besten
+    Lösung). Leere Batches werden am Ende herausgefiltert; die
+    zurückgegebenen Indizes werden dabei passend umgerechnet - auch wenn
+    dieser Fall dank der "len(order_ids) <= 1: continue"-Absicherung nie
+    eintritt (ein Batch mit nur einer Bestellung wird nie als Quelle
+    gewählt, kann also nie leer zurückbleiben), kostet die Absicherung
+    nichts und macht die Funktion robust gegen künftige Änderungen an
+    dieser Regel."""
     batches = [dict(b) for b in batches]
+    touched = set()
     for _ in range(n_moves):
         if len(batches) < 2:
             break
@@ -335,7 +372,12 @@ def perturb_batches(batches, orders, capacity, item_sizes, rng, n_moves=ILS_PERT
         j = rng.choice(candidates_j)
         batches[i] = {"order_ids": [o for o in batches[i]["order_ids"] if o != oid], "items": [k for k in batches[i]["items"] if k not in order_items]}
         batches[j] = {"order_ids": batches[j]["order_ids"] + [oid], "items": batches[j]["items"] + order_items}
-    return [b for b in batches if b["order_ids"]]
+        touched.update({i, j})
+    kept = [(idx, b) for idx, b in enumerate(batches) if b["order_ids"]]
+    new_batches = [b for _, b in kept]
+    index_map = {old: new for new, (old, _) in enumerate(kept)}
+    touched_remapped = {index_map[t] for t in touched if t in index_map}
+    return new_batches, touched_remapped
 
 
 def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_restarts=ILS_MAX_RESTARTS, time_budget_s=ILS_TIME_BUDGET_S, perturb_strength=ILS_PERTURB_STRENGTH, seed=None, max_moves=LOCAL_SEARCH_MAX_MOVES):
@@ -355,20 +397,48 @@ def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_
     Eintrag für jeden Neustart, der eine neue beste Lösung gefunden hat -
     nicht-verbessernde Neustarts (die meisten) werden nicht mitprotokolliert,
     damit die Historie eine sauber monotone "bester Stand"-Kurve bleibt statt
-    jede verworfene Störung mit anzuzeigen."""
+    jede verworfene Störung mit anzuzeigen.
+
+    WARM START je Neustart (siehe README-Benchmark): perturb_batches
+    verändert i.d.R. nur 2-4 der vielen Batches. Für alle anderen, von der
+    Störung unberührten Batches wird Route + Distanz unverändert aus der
+    aktuell besten Lösung übernommen, statt sie per Nearest-Neighbor neu
+    aufzubauen - und die Don't-Look-Bits-Warteschlange startet direkt mit
+    genau den berührten Batches statt mit allen. Das spart nicht nur
+    Rechenzeit (die Suche muss nicht erst durch lauter bereits optimale
+    Batches "durchlaufen"), sondern findet auch tendenziell bessere
+    Ergebnisse: eine kalt bei Batch 0 gestartete Suche verbraucht ihr
+    First-Improvement-Zugbudget oft an längst optimierten Batches, bevor sie
+    überhaupt bei der eigentlichen Störungsstelle ankommt."""
     rng = random.Random(seed)
     history = _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves)
     best_batches, best_routes, best_dist = history[-1]
+    best_dists = [route_distance(r, D) for r in best_routes]
 
     t_start = time.time()
     for _ in range(max_restarts):
         if time.time() - t_start > time_budget_s:
             break
-        perturbed = perturb_batches(best_batches, orders, capacity, item_sizes, rng, perturb_strength)
-        cand_history = _inter_batch_search_dlb(perturbed, orders, capacity, item_sizes, D, max_moves)
+        perturbed, touched = perturb_batches(best_batches, orders, capacity, item_sizes, rng, perturb_strength)
+
+        cand_routes, cand_dists = [], []
+        for idx, b in enumerate(perturbed):
+            if idx in touched or idx >= len(best_routes):
+                r = nearest_neighbor_route(b["items"], D)
+                cand_routes.append(r)
+                cand_dists.append(route_distance(r, D))
+            else:
+                cand_routes.append(best_routes[idx])
+                cand_dists.append(best_dists[idx])
+
+        active_init = touched if touched else range(len(perturbed))
+        cand_history = _inter_batch_search_dlb_from_state(
+            perturbed, cand_routes, cand_dists, orders, capacity, item_sizes, D, active_init, max_moves
+        )
         cand_batches, cand_routes, cand_dist = cand_history[-1]
         if cand_dist < best_dist - EPS:
             best_batches, best_routes, best_dist = cand_batches, cand_routes, cand_dist
+            best_dists = [route_distance(r, D) for r in best_routes]
             history.append((best_batches, best_routes, best_dist))
 
     polished_routes, polished_total = _polish_final_batches(best_batches, D)

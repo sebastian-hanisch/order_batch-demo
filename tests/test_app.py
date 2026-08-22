@@ -479,7 +479,7 @@ def test_perturb_batches_preserves_all_orders_exactly_once():
     construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
 
     rng = random.Random(1)
-    perturbed = perturb_batches(construction, orders, capacity, item_sizes, rng, n_moves=3)
+    perturbed, touched = perturb_batches(construction, orders, capacity, item_sizes, rng, n_moves=3)
 
     covered = sorted(oid for b in perturbed for oid in b["order_ids"])
     assert covered == sorted(orders.keys())
@@ -488,6 +488,7 @@ def test_perturb_batches_preserves_all_orders_exactly_once():
         for oid in b["order_ids"]:
             assert oid not in seen, "Bestellung wurde in mehreren Batches gefunden"
             seen.add(oid)
+    assert touched.issubset(set(range(len(perturbed))))
 
 
 def test_perturb_batches_respects_capacity():
@@ -497,7 +498,7 @@ def test_perturb_batches_respects_capacity():
     construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
 
     rng = random.Random(2)
-    perturbed = perturb_batches(construction, orders, capacity, item_sizes, rng, n_moves=5)
+    perturbed, _touched = perturb_batches(construction, orders, capacity, item_sizes, rng, n_moves=5)
 
     for b in perturbed:
         assert batch_capacity_size(b["items"], item_sizes) <= capacity + 1e-6

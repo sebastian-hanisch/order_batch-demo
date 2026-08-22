@@ -279,6 +279,49 @@ zwei davon verworfen, eine umgesetzt:
   2-opt). End-zu-Ende am Stresstest-Szenario: **2,15s → 1,86s (1,15x)**, im reinen
   Distanz-Mikrobenchmark 1,33x.
 
+## Benchmark: Warm-Start für Iterated-Local-Search-Neustarts
+
+Weitere Nachfrage ("wäre die andere Maßnahme sinnvoll, wenn wir noch Metaheuristiken ausbauen?
+Was für andere Performanceverbesserungen wären noch sinnvoll?") führte auf eine deutlich
+wirksamere Idee als die zuvor verworfenen Kandidaten: Jeder ILS-Neustart perturbiert nur 2-4 von
+oft Dutzenden Batches (`perturb_batches`), baute bisher aber trotzdem für ALLE Batches die
+Nearest-Neighbor-Route neu auf und startete die Don't-Look-Bits-Warteschlange mit allen Batches -
+obwohl die meisten davon unverändert und bereits lokal optimal sind.
+
+Umgesetzt: `perturb_batches` gibt jetzt zusätzlich zurück, welche Batch-Indizes tatsächlich
+verändert wurden. `iterated_local_search_history` übernimmt für alle unberührten Batches Route und
+Distanz unverändert aus der aktuell besten Lösung und baut nur für die berührten Batches eine neue
+Route auf; die DLB-Warteschlange startet direkt mit genau diesen berührten Batches
+(`_inter_batch_search_dlb_from_state`, der gemeinsame Kern für Kalt- und Warmstart).
+
+| Instanz | Neustarts | Kaltstart | Warmstart | Speedup | Distanz kalt → warm |
+|---|---|---|---|---|---|
+| 24 Bestellungen | 40 | 0,72s | 0,46s | **1,6x** | 1082 → 1043 |
+| 30 Bestellungen | 40 | 1,39s | 0,67s | **2,1x** | 1388 → 1373 |
+| 80 Bestellungen | 10 | 1,59s | 0,95s | **1,7x** | 3518 → 3370 |
+
+Bemerkenswert: der Warmstart ist nicht nur schneller, sondern findet auch durchweg **bessere**
+Lösungen - kein Kompromiss. Grund: die kaltgestartete Suche beginnt ihre Warteschlange immer bei
+Batch 0 und verbraucht ihr First-Improvement-Zugbudget oft an längst optimierten Batches, bevor sie
+überhaupt bei der eigentlichen Störungsstelle ankommt. Der Warmstart setzt die Warteschlange direkt
+an die Störungsstelle, sodass sich verbessernde Zugketten von dort aus ungebremst ausbreiten
+können - ein reiner Nebeneffekt der Warteschlangen-Reihenfolge bei First-Improvement-Suche, nicht
+der eigentliche Zweck der Änderung, aber ein willkommener.
+
+Auf Nutzeranfrage anschließend zwei weitere Kandidaten geprüft:
+
+- **Bestellgrößen-Memoisierung** (`sum(item_sizes[k] for k in orders[oid])` einmalig cachen, da
+  sich die Zusammensetzung einer Bestellung während der Suche nie ändert, nur ihre
+  Batch-Zugehörigkeit): nur **1,03-1,06x** über mehrere Instanzgrößen (24/30/80 Bestellungen) -
+  die Bestellungen sind klein genug (2-6 Positionen), dass die Summe selbst bei tausendfachem
+  Neuberechnen kaum ins Gewicht fällt. Nicht übernommen.
+- **Numpy-vektorisierte `_cheapest_insertion`** (die Suche nach der günstigsten Einfügeposition
+  über alle Kandidatenpositionen vektorisiert statt in einer Python-Schleife über die Route): bei
+  der Standardkapazität (15) ein Wash (0,98x, im Rauschen), wächst aber mit der Batch-Kapazität -
+  **1,14x bei Kapazität 30, 1,38x bei Kapazität 60** (End-zu-Ende am 80-Bestellungen-Stresstest,
+  inkl. Iterated Local Search) - genau der bereits oben als Risikozone dokumentierte
+  Maximalwerte-Randfall. Kein Nachteil beim Normalfall, spürbarer Gewinn im Worst Case. **Umgesetzt.**
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
