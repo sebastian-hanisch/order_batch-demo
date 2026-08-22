@@ -347,7 +347,7 @@ Suche selbst (Cheapest-Insertion-Bewertungen), nicht in der abschließenden Poli
 Trotzdem umgesetzt: mechanisch, ohne jede Verhaltensänderung (identische Ergebnisse vor/nach dem
 Fix), kein Nachteil irgendwo - dieselbe Kategorie wie die Numpy-Indexierung weiter oben.
 
-## Benchmark: vier Metaheuristik-Varianten geprüft, keine schlägt die aktuelle Konfiguration
+## Benchmark: neun Metaheuristik-Varianten geprüft, keine schlägt die aktuelle Konfiguration
 
 Nach den Performance-Runden auf Nutzeranfrage die Qualitätsseite noch einmal geprüft: taugt eine
 andere ILS-Akzeptanzregel oder eine andere Störung als das aktuelle "Better"-Kriterium (jeder
@@ -384,8 +384,98 @@ Stresstest-Instanz ins deutliche Gegenteil um (vermutlich weil Swap-Züge bei gr
 teurere, disruptivere Störungen erzeugen, die im Zeitbudget nicht mehr sauber rekonvergieren) - eine
 instanzgrößenabhängige Umschaltung wäre technisch möglich, aber genau die Art zusätzlicher
 Komplexität für unsicheren Nutzen, die in dieser Session bei den Performance-Kandidaten mehrfach
-bewusst verworfen wurde. Keine der vier Varianten übernommen - die aktuelle Metaheuristik-
-Konfiguration ist für dieses Problem bereits gut getroffen.
+bewusst verworfen wurde. Keine der vier Varianten übernommen.
+
+Auf Nachfrage, ob auch ein GRUNDSÄTZLICH anderes Metaheuristik-Paradigma (Tabu Search, Genetic
+Algorithm, Beam Search, ...) besser abschneiden könnte, wurde **Tabu Search** als vielversprechendster
+Kandidat geprüft (bester Fit zur bestehenden Zug-Infrastruktur - Genetic Algorithm hätte für ein
+Kapazitäts-Partitionierungsproblem aufwendige, machbarkeitserhaltende Crossover-Operatoren gebraucht,
+Beam Search als reine Konstruktionsheuristik trifft vermutlich dieselbe Wand wie die drei
+Clustering-Versuche oben). Statt wie DLB den ERSTEN verbessernden Zug zu nehmen, wertet Tabu Search
+in jeder Iteration die KOMPLETTE Relocate+Swap-Nachbarschaft aus und wählt den besten Zug - auch
+verschlechternd, wenn kein besserer verfügbar ist -, sperrt aber kürzlich rückgängig gemachte Züge für
+eine Tabu-Dauer (Zyklenvermeidung), mit einer Aspirationsregel für neue globale Bestlösungen. Nutzt
+dieselbe Cheapest-Insertion/Distanz-Delta-Maschinerie wie die bestehende Suche.
+
+| Szenario | Baseline | Random Walk | Adaptive Stärke | Simulated Annealing | Gemischte Störung | Tabu Search |
+|---|---|---|---|---|---|---|
+| 24 Bestellungen | 1891 | 1896 (−0,25%) | 1886 (+0,29%) | 1886 (+0,27%) | 1878 (+0,69%) | 1968 (−4,04%) |
+| 30 Bestellungen | 2435 | 2499 (−2,61%) | 2499 (−2,61%) | 2499 (−2,61%) | 2424 (+0,45%) | 2475 (−1,64%) |
+| 80 Bestellungen, Kapazität 60 | 2867 | 2969 (−3,56%) | 3000 (−4,62%) | 2973 (−3,68%) | 3029 (−5,65%) | 3058 (−6,66%) |
+
+Ebenfalls durchweg schlechter - und deutlicher als alle vier vorherigen Kandidaten. Um auszuschließen,
+dass das nur am (gegenüber ILS knapperen) Zeitbudget lag, wurde beim größten Szenario das Zeitbudget
+verzehnfacht (15s statt 1,5s): Tabu Search kam von 15 auf 148 Iterationen, der Rückstand wurde aber
+GRÖSSER statt kleiner (**−10,14%** statt −6,66%) - kein Zeitproblem, sondern ein struktureller
+Mismatch. Grund: die vollständige Nachbarschaftsauswertung pro Iteration ist O(Batches² ×
+Bestellungen²) - von Natur aus teuer. Die bestehende DLB-Suche nimmt dagegen den ersten
+verbessernden Zug und bleibt dank Warm-Start auf die tatsächlich betroffenen Batches fokussiert -
+dadurch passen um Größenordnungen mehr Iterationen ins gleiche Budget, was die fehlende
+"bester Zug"-Cleverness von Tabu Search mehr als ausgleicht. Nicht übernommen.
+
+Als zweiter, ebenfalls vielversprechend eingeschätzter Kandidat wurde **Adaptive Large Neighborhood
+Search** (ALNS, Ropke/Pisinger 2006) geprüft - der VRP-Standardansatz für genau dieses Muster
+(Destroy-and-Repair statt zufälliger Einzelzüge). Ersetzt die bisherige leichte Störung (2 zufällige
+Relocates) durch: gezielt mehrere Bestellungen entfernen (Random- oder Worst-Removal, also die
+Bestellungen mit dem größten aktuellen Distanz-Beitrag) und per Greedy- oder Regret-2-Insertion
+wieder einfügen (Regret-2: die Bestellung zuerst platzieren, bei der die zweitbeste Einfügeposition
+am stärksten von der besten abweicht - vermeidet, sich in eine Ecke zu manövrieren). Vier Operatoren
+(2 Destroy × 2 Repair), adaptiv per Roulette-Wheel nach bisherigem Erfolg gewichtet - die
+Akzeptanzregel blieb bewusst unverändert "Better" (hat sich als robusteste Wahl erwiesen), nur die
+Störung selbst wurde durch die strukturiertere ALNS-Variante ersetzt.
+
+| Szenario | Baseline | ALNS |
+|---|---|---|
+| 24 Bestellungen | 1891 | 1883 (+0,44%) |
+| 30 Bestellungen | 2435 | 2454 (−0,81%) |
+| 80 Bestellungen, Kapazität 60 | 2867 | 3014 (−5,1% bis −5,4%, je nach Entfernungsgröße) |
+
+Anders als bei Tabu Search lag es beim großen Szenario NICHT am Zeitbudget - ALNS bekam dort sogar
+*mehr* Restarts als die Baseline (8 vs. 5) - und auch nicht an einer zu aggressiven Entfernungsgröße:
+ein Sweep über die Anzahl entfernter Bestellungen (2, 4, 6, 10) ergab durchweg denselben ~5%
+Rückstand, selbst bei einer zur Baseline vergleichbar kleinen Entfernungsgröße (k=2). Bei nur 5-8
+Restarts insgesamt dominiert bei dieser Instanzgröße vermutlich eher, welche wenigen Störungen
+konkret ausprobiert werden, als die Cleverness des Mechanismus dahinter. Nicht übernommen.
+
+Auf Nachfrage, ob sich diese Ansätze statt als VOLLERSATZ der Perturbation/Akzeptanz auch DOSIERT an
+anderer Stelle einbauen oder mit der bestehenden Suche kombinieren lassen, drei gezielt abgeschwächte
+Varianten geprüft:
+
+- **Worst-Order-Auswahl**: `perturb_batches` wählt aktuell rein zufällig, welche Bestellung
+  verschoben wird. Diese Variante wählt stattdessen die Bestellung mit dem größten aktuellen
+  Distanz-Beitrag (ALNS-Idee "Worst Removal"), ohne die Störgröße selbst zu ändern (weiterhin nur
+  2 Bestellungen).
+- **Gelegentlicher ALNS-Kick**: die meisten Neustarts bleiben die billige 2-Relocate-Störung, aber
+  nach 5 erfolglosen Neustarts in Folge einmal eine stärkere ALNS-Destroy-Repair-Störung einstreuen,
+  danach Stagnationszähler zurücksetzen - hedged zwischen vielen billigen Versuchen und gelegentlicher
+  tieferer Diversifikation.
+- **Tabu-verstärktes DLB**: läuft die Don't-Look-Bits-Warteschlange leer (kein verbessernder Zug
+  mehr), statt sofort zu stoppen bis zu 2 zusätzliche "beste verfügbare" Züge zulassen (auch
+  verschlechternd) mit kurzer Tabu-Sperre auf den Rückzug, dann DLB von den berührten Batches aus
+  fortsetzen - Tabu Searchs Zyklenvermeidungs-Idee, aber ohne die teure vollständige
+  Nachbarschaftsauswertung JEDER Iteration.
+
+| Szenario | Baseline | Worst-Order-Auswahl | Gelegentlicher Kick | Tabu-verstärktes DLB |
+|---|---|---|---|---|
+| 24 Bestellungen | 1891 | 1897 (−0,31%) | 1888 (+0,17%) | 1888 (+0,17%) |
+| 30 Bestellungen | 2435 | 2499 (−2,61%) | 2472 (−1,51%) | 2499 (−2,61%) |
+| 80 Bestellungen, Kapazität 60 | 2867 | 3000 (−4,61%) | 2948 (−2,81%) | 2986 (−4,12%) |
+
+Der gelegentliche Kick ist am wenigsten schlecht - beim großen Szenario der beste Wert unter allen
+neun getesteten Varianten (−2,81%), bei 24 Bestellungen sogar minimal besser - aber weiterhin
+unterlegen. Überraschend schwach: die Worst-Order-Auswahl, die naheliegendste und am wenigsten
+invasive der drei Ideen (ändert nur WELCHE Bestellung verschoben wird, nicht wie stark), schneidet am
+schlechtesten ab - sogar minimal schlechter als reiner Zufall. Plausible Erklärung: die zufällige
+Auswahl sorgt für Streuung, welche Bestellung über verschiedene Neustarts hinweg ausprobiert wird;
+"immer die teuerste zuerst" verengt diese Vielfalt und probiert über viele Neustarts hinweg tendenziell
+ähnliche Züge, statt den Suchraum breiter abzudecken. Keine der drei Varianten übernommen.
+
+Fazit nach neun geprüften Metaheuristik-Varianten (vier ILS-Akzeptanz-/Störungsvarianten, zwei
+grundsätzlich andere Paradigmen als Vollersatz - Tabu Search, ALNS -, plus drei dosierte
+Kombinationen derselben Ideen): die aktuelle Kombination aus Greedy-Seed/Zonen-Sweep-Konstruktion,
+warmgestarteter ILS+DLB-Suche, "Better"-Akzeptanz und reiner, zufälliger Relocate-Störung ist für
+dieses Problem bemerkenswert robust getroffen - praktisch jede Verfeinerung, ob aggressiv oder
+vorsichtig dosiert, schneidet beim größten, praktisch wichtigsten Stresstest-Szenario schlechter ab.
 
 ## Zwei Kapazitätsarten statt einer fixen
 
