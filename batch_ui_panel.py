@@ -21,7 +21,7 @@ import time
 import numpy as np
 import streamlit as st
 
-from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business
+from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, route_leg_distances
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_visualization import build_batch_detail_figure, build_warehouse_overview_figure
 
@@ -102,6 +102,20 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
     history = histories[batch_idx]
     n_steps = len(history)
 
+    # Auf Nutzeranfrage ergänzt, um nachvollziehbarer zu machen, WARUM genau
+    # diese Bestellungen zusammen im selben Batch gelandet sind: die
+    # räumliche Streuung (wie viele Gänge werden angelaufen?) - Bestellungs-
+    # und Positionsanzahl stehen bereits im Dropdown-Label oben, deshalb hier
+    # bewusst nicht wiederholt.
+    batch_aisles = [aisles[i] for i in batch["items"]]
+    min_aisle, max_aisle = min(batch_aisles), max(batch_aisles)
+    aisle_span = max_aisle - min_aisle + 1
+    span_word = "Gang" if aisle_span == 1 else "Gängen"
+    st.caption(
+        f"📍 Die Positionen dieses Batches liegen in {aisle_span} {span_word} "
+        f"(Gang {min_aisle + 1} bis {max_aisle + 1}) - je enger räumlich beieinander, desto kürzer die Route."
+    )
+
     if n_steps > 1:
         auto_play = st.checkbox("▶️ 2-opt-Verbesserung automatisch abspielen", key=f"{prefix}_auto_{batch_idx}")
         step = st.slider(
@@ -114,15 +128,19 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
         st.info("Die 2-opt-Verbesserung hat für diesen Batch keine bessere Reihenfolge gefunden.")
 
     route_snapshot, dist_snapshot = history[step]
-    fig_detail = build_batch_detail_figure(aisles, positions, aisle_length, aisle_spacing, batch, route_snapshot)
+    fig_detail = build_batch_detail_figure(aisles, positions, aisle_length, aisle_spacing, batch, route_snapshot, D, batch_idx=batch_idx)
     plot_slot = st.empty()
     plot_slot.plotly_chart(fig_detail, width="stretch", key=f"{prefix}_detail_plot_{batch_idx}_{step}")
-    st.caption(f"Distanz dieses Batches beim angezeigten Schritt: {dist_snapshot:.0f} m (Start: {history[0][1]:.0f} m)")
+    return_leg = route_leg_distances(route_snapshot, D)[-1] if route_snapshot else 0.0
+    st.caption(
+        f"Distanz dieses Batches beim angezeigten Schritt: {dist_snapshot:.0f} m (Start: {history[0][1]:.0f} m) "
+        f"· Rückweg vom letzten Halt zum Depot: {return_leg:.0f} m - Distanz je Zwischenhalt siehe Hover-Text im Plot."
+    )
 
     if auto_play:
         for s in range(n_steps):
             snap, _ = history[s]
-            f = build_batch_detail_figure(aisles, positions, aisle_length, aisle_spacing, batch, snap)
+            f = build_batch_detail_figure(aisles, positions, aisle_length, aisle_spacing, batch, snap, D, batch_idx=batch_idx)
             plot_slot.plotly_chart(f, width="stretch", key=f"{prefix}_auto_{batch_idx}_{s}")
             time.sleep(0.15)
 

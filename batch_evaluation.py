@@ -26,6 +26,23 @@ def route_distance(route, D):
     return sum(D[nodes[k], nodes[k + 1]] for k in range(len(nodes) - 1))
 
 
+def route_leg_distances(route, D):
+    """Distanz JEDES einzelnen Wegabschnitts (Depot -> erster Halt -> ... ->
+    letzter Halt -> Depot), in Besuchsreihenfolge - die Summe entspricht
+    route_distance(route, D). Auf Nutzeranfrage ergänzt, um das Ergebnis
+    nachvollziehbarer zu machen: zeigt in der UI (Hover-Text je Halt,
+    Rückweg-Distanz in der Bildunterschrift), WO die Gesamtdistanz eines
+    Batches tatsächlich anfällt, statt nur die Summe zu nennen. Bewusst als
+    eigenständige, einfache Funktion (nicht von route_distance
+    wiederverwendet) - route_distance ist ein bereits sorgfältig
+    optimierter Hot-Path (siehe README-Benchmark zur numpy-Indexierung),
+    den diese rein UI-seitige Ergänzung nicht anfassen soll."""
+    if not route:
+        return []
+    nodes = [0] + [i + 1 for i in route] + [0]
+    return [D[nodes[k], nodes[k + 1]] for k in range(len(nodes) - 1)]
+
+
 def batch_capacity_size(items, item_sizes):
     """Wie stark ein Batch die Kapazität beansprucht, in der aktiven
     Kapazitätseinheit (Anzahl Positionen oder Summe Volumen)."""

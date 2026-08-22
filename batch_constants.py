@@ -5,7 +5,20 @@ Werte nutzen, ohne Streamlit importieren zu müssen - dasselbe Muster wie in
 den anderen Demos (siehe z. B. vrp_constants.py).
 """
 
-BATCH_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#be185d", "#65a30d"]
+# Okabe/Ito (2008) - eine der Standard-Paletten für farbfehlsichtige
+# Nutzer (Rot-Grün-Schwäche betrifft ~8% der Männer): jede Farbe bleibt
+# auch bei Deuteranopie/Protanopie von den anderen unterscheidbar, anders
+# als die ursprüngliche Palette (Rot #dc2626 direkt neben Grün #16a34a lag
+# zu nah beieinander). Schwarz aus dem Original-Set ersetzt durch ein Braun,
+# da die Packstation (DEPOT_COLOR) bereits fast schwarz ist. Bei mehr
+# Batches als Farben (auf Nutzeranfrage geprüft, u. a. das
+# "Heterogene Artikelgrößen"-Szenario mit 15 Batches) wiederholt sich die
+# Farbe zwar, aber build_warehouse_overview_figure/build_batch_detail_figure
+# wechseln dann zusätzlich das Marker-Symbol (siehe BATCH_MARKER_SYMBOLS) -
+# beides zusammen bleibt bis zu len(BATCH_COLORS)*len(BATCH_MARKER_SYMBOLS)
+# Batches eindeutig unterscheidbar.
+BATCH_COLORS = ["#0072B2", "#D55E00", "#009E73", "#E69F00", "#CC79A7", "#56B4E9", "#F0E442", "#8B4513"]
+BATCH_MARKER_SYMBOLS = ["circle", "square", "diamond", "triangle-up", "x", "cross", "pentagon", "hexagon"]
 AISLE_COLOR = "#d1d5db"
 CROSS_AISLE_COLOR = "#9ca3af"
 DEPOT_COLOR = "#111827"

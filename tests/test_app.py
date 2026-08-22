@@ -23,6 +23,7 @@ from batch_evaluation import (
     classify_comparison,
     distance_to_business,
     route_distance,
+    route_leg_distances,
     solution_totals,
 )
 from batch_feedback import get_feedback_counts, log_feedback
@@ -41,6 +42,7 @@ from batch_local_search import (
 from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_presets import SETTING_SPECS, apply_preset, bounds, load_permalink_settings
+from batch_visualization import _batch_style
 from batch_warehouse import aisle_x, build_distance_matrix, depot_distance, item_distance
 
 
@@ -956,3 +958,69 @@ def test_apply_preset_rejects_unknown_keys():
 def test_capacity_mode_spec_has_exactly_two_choices():
     spec = SETTING_SPECS["capacity_mode_radio"]
     assert spec.choices == (CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME)
+
+
+# ---------------------------------------------------------------------------
+# _batch_style (Visualisierung, auf Nutzeranfrage behoben): die Detailansicht
+# eines Batches nutzte bisher fest die erste Palettenfarbe statt der Farbe,
+# die der Batch auch in der Uebersichtsfigur hat - fuer denselben Batch
+# sahen Uebersicht und Detailansicht dadurch unterschiedlich aus.
+# ---------------------------------------------------------------------------
+
+def test_batch_style_matches_between_first_palette_cycle():
+    from batch_constants import BATCH_COLORS
+
+    for idx in range(len(BATCH_COLORS)):
+        color, _symbol = _batch_style(idx)
+        assert color == BATCH_COLORS[idx], "Farbe muss exakt der Uebersichtsfigur-Zuordnung entsprechen"
+
+
+def test_batch_style_is_deterministic():
+    for idx in [0, 3, 7, 15, 42]:
+        assert _batch_style(idx) == _batch_style(idx)
+
+
+def test_batch_style_stays_distinct_beyond_palette_size():
+    from batch_constants import BATCH_COLORS, BATCH_MARKER_SYMBOLS
+
+    n_combinations = len(BATCH_COLORS) * len(BATCH_MARKER_SYMBOLS)
+    styles = [_batch_style(idx) for idx in range(n_combinations)]
+    assert len(set(styles)) == n_combinations, "Jede (Farbe, Symbol)-Kombination sollte bis dahin einmalig sein"
+
+
+def test_batch_style_repeats_color_but_changes_symbol_after_palette_exhausted():
+    from batch_constants import BATCH_COLORS
+
+    n = len(BATCH_COLORS)
+    color_first, symbol_first = _batch_style(0)
+    color_wrapped, symbol_wrapped = _batch_style(n)
+    assert color_wrapped == color_first, "Nach Erschoepfen der Palette wiederholt sich die Farbe"
+    assert symbol_wrapped != symbol_first, "...aber das Symbol wechselt, damit Batches unterscheidbar bleiben"
+
+
+# ---------------------------------------------------------------------------
+# route_leg_distances (auf Nutzeranfrage ergaenzt, um das Ergebnis
+# nachvollziehbarer zu machen: Distanz je Wegabschnitt statt nur die Summe)
+# ---------------------------------------------------------------------------
+
+def test_route_leg_distances_sums_to_route_distance():
+    orders, aisles, positions, _volumes = _sample_orders(n_orders=6, items_min=2, items_max=4, seed=5)
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=25.0)
+    route = list(range(6))
+
+    legs = route_leg_distances(route, D)
+    assert sum(legs) == pytest.approx(route_distance(route, D))
+
+
+def test_route_leg_distances_has_one_more_leg_than_route_length():
+    orders, aisles, positions, _volumes = _sample_orders(n_orders=6, items_min=2, items_max=4, seed=6)
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=25.0)
+    route = list(range(5))
+
+    legs = route_leg_distances(route, D)
+    assert len(legs) == len(route) + 1, "Depot->1, 1->2, ..., letzter->Depot"
+
+
+def test_route_leg_distances_empty_route_returns_empty_list():
+    D = build_distance_matrix(np.array([0]), np.array([0.0]), aisle_spacing=3.0, aisle_length=25.0)
+    assert route_leg_distances([], D) == []

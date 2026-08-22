@@ -681,6 +681,56 @@ Zuteilungs+Routing-Suche weiter oben - davor waren die Politur-Phase und `app.py
 Neuaufbau exakt dieselbe Operation (`route_batch` auf dieselben `final_batches` angewendet), also
 zwangsläufig identisch.
 
+## UX: Batch-Farben in Übersicht und Detailansicht waren inkonsistent
+
+Auf Nutzeranfrage nach Verbesserungen an der Visualisierung geprüft und gefunden:
+`build_batch_detail_figure` nahm die Batch-Nummer nie entgegen und färbte die Detailansicht deshalb
+immer mit der ersten Palettenfarbe (`BATCH_COLORS[0]`) - unabhängig davon, welcher Batch tatsächlich
+ausgewählt war. Wählte man z. B. "Batch 3" (Grün in der Übersicht), erschien er in der Detailansicht
+trotzdem in Blau. Behoben, indem beide Figuren jetzt dieselbe kleine Hilfsfunktion (`_batch_style`)
+nutzen; per Skript gegen die Übersichtsfigur verifiziert (`batch_idx` 0, 2, 5 → alle Farben/Symbole
+stimmen exakt überein).
+
+Dabei gleich zwei weitere, selbst beobachtete Schwächen der Farbpalette behoben:
+- **Nur 8 Farben, wiederholten sich bei mehr Batches** (im "Heterogene Artikelgrößen"-Szenario
+  waren schon 15 Batches zu sehen) - Batch 1 und Batch 9 waren farblich nicht unterscheidbar.
+  Behoben: ab der zweiten Palettenrunde wechselt zusätzlich das Marker-Symbol (Kreis, Quadrat,
+  Raute, ...), sodass bis zu 8×8=64 Batches eindeutig unterscheidbar bleiben.
+- **Rot und Grün lagen direkt nebeneinander** in der ursprünglichen Palette (`#dc2626`, `#16a34a`)
+  - für farbfehlsichtige Nutzer (Rot-Grün-Schwäche betrifft ~8% der Männer) schwer zu unterscheiden.
+  Ersetzt durch die Okabe/Ito-Palette (2008), eine Standardempfehlung für farbfehlsichtige
+  Zugänglichkeit; Schwarz aus dem Original-Set durch ein Braun ersetzt, da die Packstation
+  (Depot-Symbol) bereits fast schwarz eingefärbt ist.
+
+Vier neue, gezielte Tests für `_batch_style` (Übereinstimmung mit der Übersichtsfigur,
+Determinismus, Eindeutigkeit über 64 Kombinationen, Symbolwechsel nach Palettenerschöpfung).
+
+## UX: Ergebnis nachvollziehbarer gemacht (Distanz je Wegabschnitt, räumliche Streuung)
+
+Auf Nutzeranfrage ("kann man das Ergebnis noch besser nachvollziehbar machen?") zwei gezielte
+Ergänzungen statt allgemeiner Politur:
+
+- **Distanz je Wegabschnitt in der Detailansicht**: bisher zeigte jeder Halt nur seine Nummer in der
+  Besuchsreihenfolge. Der Hover-Text nennt jetzt zusätzlich die Distanz DIESES Abschnitts (vom Depot
+  bzw. vom vorherigen Halt) - sichtbar, wo die Gesamtdistanz eines Batches tatsächlich anfällt, statt
+  nur die Summe zu kennen. Die Bildunterschrift ergänzt außerdem den Rückweg vom letzten Halt zum
+  Depot, der bisher gar nicht separat sichtbar war. Neue Funktion `route_leg_distances` in
+  `batch_evaluation.py` (Summe entspricht exakt `route_distance`) - bewusst NICHT in die bereits
+  optimierte `route_distance` selbst integriert, um den sorgfältig getunten Hot-Path unangetastet zu
+  lassen (siehe numpy-Indexierungs-Benchmark oben).
+- **Räumliche Streuung je Batch**: neue Bildunterschrift bei "Batch im Detail" zeigt, über wie viele
+  Gänge sich die Positionen eines Batches erstrecken ("liegen in 3 Gängen (Gang 2 bis 4)") - macht
+  sichtbar, wie räumlich kompakt oder verstreut eine Zuteilung tatsächlich ist, ohne die (bereits im
+  Dropdown-Label vorhandene) Bestell-/Positionsanzahl zu wiederholen.
+
+Eine dritte, naheliegende Idee (eine Kausalerklärung, WARUM Greedy-Seed oder Zonen-Sweep in einem
+konkreten Szenario vorne liegt) wurde bewusst NICHT umgesetzt - eine belastbare Erklärung dafür wäre
+kaum verlässlich zu generieren, ohne im Einzelfall zu überinterpretieren.
+
+Drei neue Tests für `route_leg_distances` (Summe entspricht `route_distance`, korrekte Anzahl
+Abschnitte, leere Route). Live im Browser verifiziert: Hover-Text je Halt und beide neuen
+Bildunterschriften rendern korrekt.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

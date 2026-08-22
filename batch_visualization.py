@@ -10,11 +10,25 @@ eine Detailfigur für einen einzelnen ausgewählten Batch.
 
 import plotly.graph_objects as go
 
-from batch_constants import AISLE_COLOR, BATCH_COLORS, CROSS_AISLE_COLOR, DEPOT_COLOR
+from batch_constants import AISLE_COLOR, BATCH_COLORS, BATCH_MARKER_SYMBOLS, CROSS_AISLE_COLOR, DEPOT_COLOR
+from batch_evaluation import route_leg_distances
 from batch_warehouse import aisle_x
 
 MAX_HEIGHT_PX = 620
 MIN_HEIGHT_PX = 320
+
+
+def _batch_style(batch_idx):
+    """Farbe UND Marker-Symbol für einen Batch-Index - dieselbe Funktion wird
+    von der Übersichts- UND der Detailfigur genutzt, damit ein Batch überall
+    gleich aussieht (vorher: die Detailfigur nutzte fest BATCH_COLORS[0],
+    unabhängig vom tatsächlich ausgewählten Batch - auf Nutzeranfrage
+    behoben). Sobald mehr Batches als Farben existieren, wechselt zusätzlich
+    das Symbol (siehe BATCH_MARKER_SYMBOLS in batch_constants.py), damit
+    auch dann kein Batch mit einem anderen verwechselbar ist."""
+    color = BATCH_COLORS[batch_idx % len(BATCH_COLORS)]
+    symbol = BATCH_MARKER_SYMBOLS[(batch_idx // len(BATCH_COLORS)) % len(BATCH_MARKER_SYMBOLS)]
+    return color, symbol
 
 
 def _figure_height(n_aisles, aisle_length, aisle_spacing, width_hint_px=800):
@@ -65,7 +79,7 @@ def build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spaci
 
     depot_x = -aisle_spacing
     for b_idx, (batch, route) in enumerate(zip(batches, final_routes)):
-        color = BATCH_COLORS[b_idx % len(BATCH_COLORS)]
+        color, symbol = _batch_style(b_idx)
         route_x = [depot_x] + [aisle_x(aisles[i], aisle_spacing) for i in route] + [depot_x]
         route_y = [0] + [positions[i] for i in route] + [0]
         fig.add_trace(
@@ -79,7 +93,7 @@ def build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spaci
         fig.add_trace(
             go.Scatter(
                 x=item_x, y=item_y, mode="markers", name=f"Batch {b_idx + 1}",
-                marker=dict(size=9, color=color, line=dict(width=1, color="white")),
+                marker=dict(size=9, symbol=symbol, color=color, line=dict(width=1, color="white")),
                 hovertext=[f"Batch {b_idx + 1}" for _ in item_x], hoverinfo="text",
             )
         )
@@ -93,32 +107,46 @@ def build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spaci
     return fig
 
 
-def build_batch_detail_figure(aisles, positions, aisle_length, aisle_spacing, batch, route, width_hint_px=800):
+def build_batch_detail_figure(aisles, positions, aisle_length, aisle_spacing, batch, route, D, batch_idx=0, width_hint_px=800):
     """Detailansicht eines einzelnen Batches: Positionen in Besuchsreihenfolge
-    nummeriert, Route als durchgezogene Linie."""
+    nummeriert, Route als durchgezogene Linie. `batch_idx` sorgt dafür, dass
+    Farbe UND Symbol mit der Übersichtsfigur übereinstimmen (siehe
+    _batch_style) - ohne Angabe (Default 0) fällt die Funktion auf die erste
+    Palettenfarbe zurück, für Aufrufer, denen der Index egal ist.
+
+    Auf Nutzeranfrage ergänzt, um das Ergebnis nachvollziehbarer zu machen:
+    jeder Halt zeigt beim Hover die Distanz DIESES Wegabschnitts (vom Depot
+    bzw. vom vorherigen Halt), nicht nur die nummerierte Reihenfolge - so
+    lässt sich sehen, WO die Gesamtdistanz eines Batches herkommt (siehe
+    route_leg_distances in batch_evaluation.py)."""
     fig = go.Figure()
     n_aisles = int(max(aisles)) + 1 if len(aisles) else 1
     _add_layout_shapes(fig, n_aisles, aisle_length, aisle_spacing)
 
     depot_x = -aisle_spacing
-    color = BATCH_COLORS[0]
+    color, symbol = _batch_style(batch_idx)
     route_x = [depot_x] + [aisle_x(aisles[i], aisle_spacing) for i in route] + [depot_x]
     route_y = [0] + [positions[i] for i in route] + [0]
     fig.add_trace(
         go.Scatter(
             x=route_x, y=route_y, mode="lines+markers", line=dict(color=color, width=2.5),
-            marker=dict(size=8, color=color, line=dict(width=1, color="white")),
+            marker=dict(size=8, symbol=symbol, color=color, line=dict(width=1, color="white")),
             hoverinfo="skip", showlegend=False,
         )
     )
     item_x = [aisle_x(aisles[i], aisle_spacing) for i in route]
     item_y = [positions[i] for i in route]
     labels = [str(k + 1) for k in range(len(route))]
+    leg_dists = route_leg_distances(route, D)
+    hover_texts = [
+        f"{k + 1}. Halt - {leg_dists[k]:.0f} m {'vom Depot' if k == 0 else 'vom vorherigen Halt'}"
+        for k in range(len(route))
+    ]
     fig.add_trace(
         go.Scatter(
             x=item_x, y=item_y, mode="markers+text", text=labels, textposition="top center",
-            marker=dict(size=14, color=color, line=dict(width=1.5, color="white")),
-            hovertext=[f"{k + 1}. Halt" for k in range(len(route))], hoverinfo="text", showlegend=False,
+            marker=dict(size=14, symbol=symbol, color=color, line=dict(width=1.5, color="white")),
+            hovertext=hover_texts, hoverinfo="text", showlegend=False,
         )
     )
 
