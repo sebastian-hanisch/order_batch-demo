@@ -809,14 +809,30 @@ ihrer bisherigen heuristischen Route übernommen, nie schlechter als vorher. Beh
 kürzere der beiden Routen (analog `_apply_final_safety_net`) - ein Timeout ohne bewiesene Optimalität
 (Status "FEASIBLE"/"UNKNOWN") kann die Route also nie verschlechtern.
 
-In der Praxis findet die Politur auf den meisten Instanzen dieser App wenig bis nichts: die
-Kombination aus Inter-Batch-Suche, Iterated Local Search und `_apply_final_safety_net` bringt die
-2-opt-Lösung schon so nah ans Optimum (siehe Tabelle oben, 0,1% Lücke nach ILS auf den ursprünglich
-geprüften Instanzen), dass CP-SAT selbst bei großen Batches (n≈60, live getestet: 3 Batches, 1,3s
-Rechenzeit) keine kürzere Route mehr findet - der Wert der Politur liegt dann vor allem im NACHWEIS
-der Optimalität, nicht in einer tatsächlichen Verbesserung. Bei kleineren, weniger stark
-vor-optimierten Zwischenständen (z. B. direkt nach der Konstruktion) oder Ausreißer-Batches greift
-sie dagegen nachweislich (siehe Testfall mit bewusst schlechter Startroute unten).
+**Benchmark: was die Politur tatsächlich bringt.** Auf Nutzeranfrage ("was bringt das Feature
+tatsächlich?") systematisch über 5 Szenariotypen × 3 Seeds × beide Strategien (30 Läufe) gemessen -
+jeweils die ECHTE Produktionspipeline (Konstruktion + Inter-Batch-Suche + Iterated Local Search +
+`_apply_final_safety_net`) vor der Politur, kein Nachbau:
+
+| Szenario | max. Batch-Größe | Ø Verbesserung | Läufe mit Verbesserung | Rechenzeit |
+|---|---|---|---|---|
+| Klein (Standard, 24 Bestellungen) | 15 | 0,30% | 4/6 | 0,1-0,5s |
+| Mittel (40 Bestellungen) | 15 | 0,51% | 5/6 | 0,2-0,3s |
+| Knappe Kapazität (viele kleine Batches) | 10 | 0,06% | 2/6 | 0,2-0,4s |
+| Große Batches (wenige, volle Batches) | 40 | 0,53% | 5/6 | 1,3-3,2s |
+| Worst Case (Regler-Maximalwerte) | 60 | 0,60% | 6/6 | 12-22s |
+
+Über alle 30 Läufe: Mittel 0,40%, Median 0,33%, Max 1,35% - in 67% der Läufe fand die Politur
+überhaupt eine kürzere Route, in den übrigen 33% bestätigte sie nur, dass die Heuristik bereits
+exakt optimal war. Der Nutzen skaliert klar mit der Batch-Größe (konsistent mit der
+Optimalitätslücken-Tabelle oben): bei kleinen, knapp gefüllten Batches (Kapazität 10, n≤10) findet
+die Politur fast nie etwas, bei großen Batches (n=40-60) fast immer eine kleine Verbesserung, aber
+mit spürbar steigender Rechenzeit. Insgesamt liefert das Feature reale, aber typischerweise
+bescheidene Verbesserungen (unter 1% im Mittel) - sein größerer praktischer Wert liegt oft eher
+darin, in einem Drittel bis zwei Dritteln der Fälle *nachweisbar zu bestätigen*, dass die
+bestehende Heuristik bereits optimal ist, statt tatsächlich neue kürzere Routen zu finden. Bei
+kleineren, weniger stark vor-optimierten Zwischenständen (z. B. direkt nach der Konstruktion) oder
+Ausreißer-Batches greift sie deutlicher (siehe Testfall mit bewusst schlechter Startroute unten).
 
 Sechs neue Tests: Korrektheit von `exact_tsp_single_batch` gegen Brute-Force, Einzel-/Leer-Batch-
 Sonderfälle, `apply_exact_tsp_polish` nie schlechter als die Eingabe, tatsächliche Verbesserung einer
@@ -833,6 +849,33 @@ ausgelagert (`batch_ui_panel.py`), die sowohl je Tab als auch für das Haupterge
 mit eigenem Session-State-Namespace (`prefix="best"`), unabhängig von den Tab-eigenen Ergebnissen.
 Reiner Refactor der UI-Schicht, keine Logikänderung - alle 89 Tests weiterhin grün, live im Browser
 bestätigt (eigene Metriken/Plot, unabhängig vom Greedy-Seed-Tab-Ergebnis für dieselben Batches).
+
+## Bugfix: CP-SAT-Ergebnisse blieben nach einer Gangabstand-/Ganglänge-Änderung fälschlich "gültig"
+
+Auf Nutzeranfrage ("komplettes Code-Review vom gesamten Programm") gefunden: sowohl der
+CP-SAT-Vergleichs-Tab (`current_key_cpsat` in `app.py`) als auch die neue Politur-Sektion
+(`polish_key` in `render_exact_polish_section`, `batch_ui_panel.py`) nutzen einen Session-State-Key,
+um zu erkennen, ob ein gecachtes Ergebnis noch zu den aktuellen Eingaben passt - beide Keys
+enthielten `aisle_spacing` und `aisle_length` NICHT, obwohl die Distanzmatrix `D` direkt von beiden
+abhängt.
+
+**Konkrete Auswirkung (live reproduziert):** Szenario "Kompaktes Lager" mit CP-SAT gelöst -> 440 m.
+Danach NUR den "Gangabstand (m)"-Regler geändert (3,00 -> 8,00), ohne erneut zu lösen. Vor dem Fix
+blieb der Tab bei unverändertem Status ("Beste gefundene Lösung"/"Nachweislich optimal") stehen,
+zeigte aber eine STILL VERÄNDERTE Distanz (weil `cpsat_total` bei jedem Rerun frisch aus dem
+AKTUELLEN `D` berechnet wird, während die zugrunde liegende Route - `cpsat_routes` - unverändert aus
+der alten, alten Lösung stammt) - ohne jede Warnung, dass das Ergebnis nicht mehr zur aktuellen
+Distanzmatrix passt. Der Fehler pflanzte sich über `cpsat_summary` auch in den "Vergleich"-Tab fort.
+Bei der Politur-Sektion greift dieselbe Lücke, sobald eine Gangabstand-/Ganglänge-Änderung
+zufällig dieselbe Batch-Zuteilung ergibt (plausibel, da die Konstruktion Kandidaten nur relativ
+zueinander gewichtet) - nicht separat live reproduziert, aber derselbe Code-Fehler.
+
+**Fix:** `aisle_spacing`/`aisle_length` in beide Keys aufgenommen (in beiden Funktionen ohnehin schon
+im Scope). Nach dem Fix zeigt derselbe Reproduktionsschritt korrekt "⚠️ Die Eingaben haben sich seit
+dieser Lösung geändert" statt einer stillen Falschangabe - live im Browser bestätigt. Kein neuer
+automatisierter Test: die Testsuite deckt bislang ausschließlich die reinen `batch_*.py`-Funktionen
+ab, nicht app.py's Streamlit-Ablaufcode (kein `AppTest`-Setup vorhanden) - dieselbe Lücke, die den Bug
+ursprünglich unentdeckt ließ. Alle 89 bestehenden Tests bleiben unverändert grün.
 
 ## Zwei Kapazitätsarten statt einer fixen
 

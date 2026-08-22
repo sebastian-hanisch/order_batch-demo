@@ -58,7 +58,14 @@ def render_exact_polish_section(prefix, label, batches, final_routes, total_dist
         "gedeckelt, unabhängig von diesem Regler - bei vielen großen Batches werden die "
         "verbleibenden dann unverändert mit ihrer bisherigen Route übernommen.",
     )
-    polish_key = (tuple(tuple(b["items"]) for b in batches), polish_time_limit)
+    # aisle_spacing/aisle_length gehören zum Key, obwohl sie NICHT bestimmen,
+    # welche Items in welchem Batch landen: sie fließen in D ein, von dem die
+    # Politur-Distanzen abhängen (Code-Review-Fund, 2026-08-23 - dasselbe
+    # Muster wie beim current_key_cpsat-Fix in app.py). Ohne sie hätte eine
+    # reine Gangabstand-/Ganglänge-Änderung, die zufällig dieselbe Batch-
+    # Zuteilung ergibt, ein bereits veraltetes Politur-Ergebnis (falsche
+    # Distanz, aus dem alten D berechnet) weiter als gültig angezeigt.
+    polish_key = (tuple(tuple(b["items"]) for b in batches), polish_time_limit, aisle_spacing, aisle_length)
 
     cooldown_state_key = f"{prefix}_polish_last_solve_time"
     if cooldown_state_key not in st.session_state:

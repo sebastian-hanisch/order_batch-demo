@@ -450,9 +450,20 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
                 "ausgeschöpft, ohne dass Optimalität bewiesen werden konnte, zeigt das Ergebnis "
                 "'Beste gefundene Lösung' statt 'Nachweislich optimal' an.",
             )
+            # aisle_spacing/aisle_length MÜSSEN Teil des Keys sein, obwohl sie die
+            # Positionen selbst nicht verändern: sie fließen in D (Distanzmatrix)
+            # ein. Ohne sie (Code-Review-Fund, 2026-08-23) blieb ein gecachtes
+            # CP-SAT-Ergebnis nach einer reinen Gangabstand-/Ganglänge-Änderung
+            # fälschlich "gültig" - cpsat_total wird unten JEDEN Rerun frisch aus
+            # dem AKTUELLEN D berechnet, während cpsat_routes (die Besuchs-
+            # reihenfolge) aus der alten Lösung stammt: die angezeigte Distanz
+            # änderte sich dadurch still mit, ohne die "Eingaben haben sich
+            # geändert"-Warnung und weiterhin als "Nachweislich optimal"
+            # etikettiert, obwohl das nie für die neue Distanzmatrix geprüft wurde.
             current_key_cpsat = (
                 tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), tuple(order_id_col.tolist()),
                 tuple(np.round(item_sizes, 2).tolist()), capacity, num_batches_cpsat, time_limit_cpsat,
+                aisle_spacing, aisle_length,
             )
 
             if "cpsat_last_solve_time" not in st.session_state:
