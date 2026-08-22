@@ -825,6 +825,15 @@ Gesamt-Zeitbudgets. Live im Browser verifiziert: Button/Regler/Cooldown/Ergebnis
 Strategie-Tabs, Politur auf einer großen Instanz (3 Batches, bis ~60 Positionen), sowie die
 Ungültig-Erkennung bei geänderten Eingaben seit der letzten Politur.
 
+**Nachtrag:** Auf Nutzeranfrage stand die Politur-Sektion zunächst nur je Strategie-Tab zur
+Verfügung - im zusammengefassten "🎯 Ihr optimierter Batchplan"-Hauptergebnis oben (der jeweils
+bessere von Greedy-Seed/Zonen-Sweep) fehlte sie. Die UI-Sektion (bisher Teil von
+`render_batching_panel`) wurde dafür in eine eigenständige Funktion `render_exact_polish_section`
+ausgelagert (`batch_ui_panel.py`), die sowohl je Tab als auch für das Hauptergebnis aufgerufen wird -
+mit eigenem Session-State-Namespace (`prefix="best"`), unabhängig von den Tab-eigenen Ergebnissen.
+Reiner Refactor der UI-Schicht, keine Logikänderung - alle 89 Tests weiterhin grün, live im Browser
+bestätigt (eigene Metriken/Plot, unabhängig vom Greedy-Seed-Tab-Ergebnis für dieselben Batches).
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

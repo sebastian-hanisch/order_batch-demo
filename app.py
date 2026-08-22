@@ -32,6 +32,10 @@ Features:
   statt abstrakter Distanzwerte.
 - Optionaler Vergleich mit Googles CP-SAT (Open Source, exakter Constraint-
   Solver) auf kleinen Instanzen - button-gesteuert wegen Rechenzeit.
+- Optionale Politur: löst zusätzlich die Route jedes einzelnen, bereits
+  zugeteilten Batches exakt mit CP-SAT (statt nur 2-opt) und behält die
+  kürzere Route - button-gesteuert, verfügbar beim Hauptergebnis und je
+  Strategie-Tab.
 - Drei Ein-Klick-Beispielszenarien, Permalink (URL spiegelt die aktuelle
   Konfiguration), PDF-Batchplan-Export, Feedback-Mechanismus.
 
@@ -57,7 +61,7 @@ from batch_local_search import iterated_local_search_history, reconcile_per_batc
 from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_presets import apply_preset, bounds, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
-from batch_ui_panel import render_batching_panel
+from batch_ui_panel import render_batching_panel, render_exact_polish_section
 from batch_visualization import build_warehouse_overview_figure
 from batch_warehouse import build_distance_matrix
 
@@ -393,6 +397,12 @@ st.caption(
     "zu beiden Strategien und dem direkten Vergleich unten."
 )
 
+render_exact_polish_section(
+    "best", best_own["label"], best_own["batches"], best_own["final_routes"], best_own["total_distance"],
+    order_id_col, aisles, positions, aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes,
+    walking_speed, pick_time, cost_per_hour,
+)
+
 st.markdown("---")
 
 with st.expander("🔧 Wie wir das erreichen – vollständiger Strategievergleich", expanded=False):
@@ -651,6 +661,17 @@ dazu im Modul-Docstring von `batch_ortools_solver.py` und im README. Da CP-SAT f
 Suchraum exponentiell viele Möglichkeiten prüfen müsste, ist es nur für kleine Instanzen sinnvoll
 (button-gesteuert, mit Zeitlimit) - wird die Zeit ausgeschöpft, ohne dass Optimalität bewiesen
 werden konnte, zeigt das Ergebnis ehrlich "Beste gefundene Lösung" statt "Nachweislich optimal".
+
+**Touren exakt nachschärfen (optionale Politur, nicht zu verwechseln mit dem Solver oben):** Ein
+zweiter, kleinerer CP-SAT-Einsatz - löst NICHT das gesamte Zuteilungs+Routing-Problem neu, sondern
+nur die Route EINES bereits feststehenden Batches exakt (ein einzelner Hamiltonkreis über Depot und
+seine Positionen). Verfügbar direkt beim Hauptergebnis oben sowie je Strategie-Tab, per Button.
+Grund für zwei getrennte Werkzeuge: das Zuteilungsproblem selbst bleibt für CP-SAT auch bei
+mittelgroßen Instanzen zu groß (siehe oben), aber die 2-opt-Route EINES einzelnen, bereits fest
+zugeteilten Batches lässt sich auch bei recht großen Batches (bis ~40-60 Positionen) noch in
+Sekundenbruchteilen bis wenigen Sekunden beweisbar optimal lösen. Behält je Batch immer die kürzere
+der beiden Routen, kann das Ergebnis also nie verschlechtern - Details und die gemessene
+Optimalitätslücke von 2-opt für dieses Lagerlayout im README.
 
 **Warum die Pickzeit konstant bleibt:** Jede Position wird unabhängig von der Batching-Strategie
 UND unabhängig von der Kapazitätsart genau einmal gepickt - die reine Pickzeit (Greifen/Scannen)
