@@ -322,6 +322,71 @@ Auf Nutzeranfrage anschließend zwei weitere Kandidaten geprüft:
   inkl. Iterated Local Search) - genau der bereits oben als Risikozone dokumentierte
   Maximalwerte-Randfall. Kein Nachteil beim Normalfall, spürbarer Gewinn im Worst Case. **Umgesetzt.**
 
+## Benchmark: 2-opt-Distanz-Delta statt kompletter Neuberechnung je Kandidat
+
+Weitere Nachfrage ("hast du noch weitere Performance-Verbesserungsideen?") fand den größten
+algorithmischen Einzelgewinn dieser ganzen Optimierungsreihe: `find_two_opt_move` baute für JEDES
+Kandidatenpaar `(i, j)` die komplette Kandidatenroute und rief `route_distance()` (O(n)) darauf neu
+auf - macht eine einzelne 2-opt-Suchrunde O(n³) statt der üblichen O(n²), obwohl beim Umdrehen eines
+zusammenhängenden Teilstücks nur die zwei Rand-Kanten sich ändern; alle Kanten innerhalb des
+Teilstücks bleiben unverändert (die Distanzmatrix ist symmetrisch). Klassischer 2-opt-Delta-Trick:
+Kandidatenbewertung O(1) statt O(n).
+
+Isoliert (reine `two_opt_history`-Läufe über zufällige Routen, 300 Versuche zur
+Ergebnisgleichheit): **7,4x bei Kapazität 15, 12,8x bei Kapazität 30, 23,5x bei Kapazität 60** -
+identische Endergebnisse in allen 300 Versuchen. End-zu-Ende (kompletter App-Durchlauf inkl. warm-
+gestartetem ILS) fällt der Gewinn deutlich bescheidener aus, weil die volle 2-opt-Politur nur EINMAL
+je Batch NACH Konvergenz der Inter-Batch-Suche läuft - der Großteil der Gesamtzeit steckt in dieser
+Suche selbst (Cheapest-Insertion-Bewertungen), nicht in der abschließenden Politur:
+
+| Szenario | Speedup End-zu-Ende |
+|---|---|
+| 24 Bestellungen, Kapazität 15 | 1,02x |
+| 80 Bestellungen, Kapazität 60 | 1,21x |
+
+Trotzdem umgesetzt: mechanisch, ohne jede Verhaltensänderung (identische Ergebnisse vor/nach dem
+Fix), kein Nachteil irgendwo - dieselbe Kategorie wie die Numpy-Indexierung weiter oben.
+
+## Benchmark: vier Metaheuristik-Varianten geprüft, keine schlägt die aktuelle Konfiguration
+
+Nach den Performance-Runden auf Nutzeranfrage die Qualitätsseite noch einmal geprüft: taugt eine
+andere ILS-Akzeptanzregel oder eine andere Störung als das aktuelle "Better"-Kriterium (jeder
+Neustart stört von der bisher besten Lösung, ein Kandidat wird nur bei echter Verbesserung neue
+Basis - Lourenço/Martin/Stützle 2003) plus reine Relocate-Störung? Vier etablierte Varianten isoliert
+getestet (je eine Variable geändert, über 5 Zufalls-Seeds gemittelt, gleiches Zeitbudget wie
+produktiv):
+
+- **Random-Walk-Akzeptanz**: jeder Neustart stört vom zuletzt akzeptierten Kandidaten statt von der
+  besten Lösung, akzeptiert IMMER den neuen lokalen Optimum-Kandidaten als nächste Basis (mehr
+  Diversifikation, bestes Ergebnis separat mitgeführt).
+- **Adaptive Störstärke**: Störstärke steigt nach jedem nicht-verbessernden Neustart, fällt nach
+  einer Verbesserung zurück auf den Basiswert.
+- **Simulated-Annealing-artige Akzeptanz**: milder als Random Walk - schlechtere Kandidaten werden
+  nur mit sinkender Wahrscheinlichkeit `exp(-delta/T)` akzeptiert, T sinkt über die Neustarts linear
+  gegen 0.
+- **Gemischte Störung (Relocate + Swap)**: statt ausschließlich einzelne Bestellungen zu verschieben,
+  je Störzug 50/50 Relocate oder Swap zweier Bestellungen zwischen zwei Batches.
+
+| Szenario | Baseline | Random Walk | Adaptive Stärke | Simulated Annealing | Gemischte Störung |
+|---|---|---|---|---|---|
+| 24 Bestellungen | 1891 | 1896 (−0,25%) | 1886 (+0,29%) | 1886 (+0,27%) | 1878 (+0,69%) |
+| 30 Bestellungen | 2435 | 2499 (−2,61%) | 2499 (−2,61%) | 2499 (−2,61%) | 2424 (+0,45%) |
+| 80 Bestellungen, Kapazität 60 | 2867 | 2969 (−3,56%) | 3000 (−4,62%) | 2973 (−3,68%) | 3029 (−5,65%) |
+
+Kein Kandidat gewinnt konsistent über alle Instanzgrößen - und ausgerechnet beim größten,
+praktisch wichtigsten Szenario schneiden alle vier schlechter ab als die aktuelle Konfiguration.
+Plausible Erklärung: Warm-Start + Don't-Look-Bits führen die Suche bereits sehr gezielt zur
+Störungsstelle zurück - Abdriften in schlechtere Regionen (Random Walk, SA) oder aggressiveres
+Stören bei Stagnation (Adaptive Stärke) verbraucht das Zeitbudget eher an neuen, unterlegenen
+Basislösungen statt die eine gute Basis feiner nachzuschärfen. Die gemischte Relocate+Swap-Störung
+zeigt bei kleinen/mittleren Instanzen einen kleinen echten Gewinn, kehrt sich aber bei der großen
+Stresstest-Instanz ins deutliche Gegenteil um (vermutlich weil Swap-Züge bei großer Kapazität
+teurere, disruptivere Störungen erzeugen, die im Zeitbudget nicht mehr sauber rekonvergieren) - eine
+instanzgrößenabhängige Umschaltung wäre technisch möglich, aber genau die Art zusätzlicher
+Komplexität für unsicheren Nutzen, die in dieser Session bei den Performance-Kandidaten mehrfach
+bewusst verworfen wurde. Keine der vier Varianten übernommen - die aktuelle Metaheuristik-
+Konfiguration ist für dieses Problem bereits gut getroffen.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

@@ -84,15 +84,27 @@ def nearest_neighbor_route(item_indices, D):
 def find_two_opt_move(route, D):
     """Sucht EINE verbessernde 2-opt-Vertauschung (erste gefundene
     Verbesserung): ein Teilstück der Route wird umgedreht, wenn das die
-    Gesamtdistanz senkt."""
-    if len(route) < 2:
+    Gesamtdistanz senkt.
+
+    Bewertet jeden Kandidaten per Distanz-DELTA statt die komplette
+    Kandidatenroute zu bauen und ihre Gesamtdistanz neu aufzusummieren: beim
+    Umdrehen eines zusammenhängenden Teilstücks ändern sich nur die zwei
+    Rand-Kanten, alle Kanten INNERHALB des Teilstücks bleiben (die
+    Distanzmatrix ist symmetrisch) unverändert. Macht eine Suchrunde O(n^2)
+    statt O(n^3) - reines Delta, exakt dieselben Kandidaten/Ergebnisse wie
+    zuvor (siehe README-Benchmark), nur ohne die pro Kandidat wiederholte
+    volle Neuberechnung."""
+    n = len(route)
+    if n < 2:
         return route, False
-    base = route_distance(route, D)
-    for i in range(len(route) - 1):
-        for j in range(i + 1, len(route)):
-            cand = route[:i] + route[i : j + 1][::-1] + route[j + 1 :]
-            cand_dist = route_distance(cand, D)
-            if cand_dist < base - EPS:
+    nodes = [0] + [i + 1 for i in route] + [0]
+    for i in range(1, n):
+        for j in range(i + 1, n + 1):
+            a, b = nodes[i - 1], nodes[i]
+            c, d = nodes[j], nodes[j + 1]
+            delta = (D[a, c] + D[b, d]) - (D[a, b] + D[c, d])
+            if delta < -EPS:
+                cand = route[: i - 1] + route[i - 1 : j][::-1] + route[j:]
                 return cand, True
     return route, False
 
