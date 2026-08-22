@@ -1,0 +1,69 @@
+"""
+Zentrale Konstanten für die Order-Batching-Demo. Ausgelagert, damit sowohl
+app.py als auch alle Logik-Module (batch_*.py) und die Testsuite dieselben
+Werte nutzen, ohne Streamlit importieren zu müssen - dasselbe Muster wie in
+den anderen Demos (siehe z. B. vrp_constants.py).
+"""
+
+BATCH_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#be185d", "#65a30d"]
+AISLE_COLOR = "#d1d5db"
+CROSS_AISLE_COLOR = "#9ca3af"
+DEPOT_COLOR = "#111827"
+EPS = 1e-9
+
+DEFAULT_N_ORDERS = 24
+DEFAULT_ITEMS_MIN = 2
+DEFAULT_ITEMS_MAX = 6
+DEFAULT_N_AISLES = 8
+DEFAULT_AISLE_LENGTH = 30.0
+DEFAULT_AISLE_SPACING = 3.0
+DEFAULT_BATCH_CAPACITY = 15
+
+# Kapazitätsart: "Positionen" (jede Position zählt 1, das bisherige, in der
+# Batching-Literatur übliche Modell) oder "Volumen (l)" (Positionen haben
+# unterschiedliches Volumen, realistischer bei sehr heterogenen Artikel-
+# größen, z. B. Grocery/General-Merchandise-Sortimenten - auf Nutzeranfrage
+# als zweiter, umschaltbarer Modus ergänzt statt den bisherigen zu ersetzen,
+# da "Positionen" für gleichförmige Sortimente weiterhin die einfachere,
+# realistische Vereinfachung ist).
+CAPACITY_MODE_POSITIONS = "Positionen"
+CAPACITY_MODE_VOLUME = "Volumen (l)"
+DEFAULT_ITEM_VOLUME_MIN = 1.0
+DEFAULT_ITEM_VOLUME_MAX = 4.0
+DEFAULT_BATCH_CAPACITY_VOLUME = 40.0
+
+# Kommissionier-Kennzahlen: Richtwerte für einen Handkommissionierer im
+# Lager mit Kommissionierwagen (kein Routenzug/automatisiertes System).
+DEFAULT_WALKING_SPEED_MPS = 1.3
+DEFAULT_PICK_TIME_S = 18.0
+DEFAULT_COST_PER_HOUR = 28.0
+
+LOCAL_SEARCH_MAX_MOVES = 200
+
+# Iterated Local Search (Perturbation + Re-Optimierung) obendrauf auf die
+# Inter-Batch-Suche: auf Nutzeranfrage benchmarkt und ergänzt (durchweg
+# 1-4,8% kürzere Distanz auf realistischen Instanzgrößen, siehe README).
+# ILS_TIME_BUDGET_S begrenzt statt einer festen Neustart-Zahl bewusst die
+# ZEIT: bei kleinen Instanzen passen so viele Dutzend Neustarts in das
+# Budget, bei sehr großen (teure Einzelsuche) nur wenige oder gar keiner -
+# das Budget skaliert sich dadurch automatisch mit der Instanzgröße, ohne
+# das ohnehin schon dokumentierte Extremfall-Risiko (siehe README) zu
+# verschärfen. ILS_MAX_RESTARTS ist nur ein zusätzliches Sicherheitsnetz für
+# sehr kleine, sehr schnelle Instanzen (verhindert unnötig viele Neustarts,
+# wenn das Zeitbudget dort ohnehin nie ausgeschöpft würde).
+ILS_TIME_BUDGET_S = 1.5
+ILS_MAX_RESTARTS = 40
+ILS_PERTURB_STRENGTH = 2
+
+# CP-SAT-Vergleichslöser (batch_ortools_solver.py): auf Nutzeranfrage
+# ergänzt, um kleine Instanzen exakt (oder nahe-exakt) lösen und mit den
+# eigenen Heuristiken vergleichen zu können. CPSAT_MAX_MODEL_SIZE begrenzt
+# num_batches * (n_items+1)^2 (ungefähre Anzahl Bogen-Variablen des
+# CP-SAT-Modells) - empirisch ermittelt: darüber dauert schon der reine
+# Modellaufbau (nicht die Lösungssuche selbst, die durch das Zeitlimit
+# gedeckelt ist) mehrere Sekunden bis Minuten, siehe README.
+CPSAT_MAX_TIME_LIMIT = 20
+CPSAT_COOLDOWN_BUFFER = 5
+CPSAT_MAX_MODEL_SIZE = 100_000
+
+FEEDBACK_FILE = "feedback_log.csv"
