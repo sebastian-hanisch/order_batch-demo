@@ -58,14 +58,21 @@ def render_exact_polish_section(prefix, label, batches, final_routes, total_dist
         "gedeckelt, unabhängig von diesem Regler - bei vielen großen Batches werden die "
         "verbleibenden dann unverändert mit ihrer bisherigen Route übernommen.",
     )
-    # aisle_spacing/aisle_length gehören zum Key, obwohl sie NICHT bestimmen,
-    # welche Items in welchem Batch landen: sie fließen in D ein, von dem die
-    # Politur-Distanzen abhängen (Code-Review-Fund, 2026-08-23 - dasselbe
-    # Muster wie beim current_key_cpsat-Fix in app.py). Ohne sie hätte eine
-    # reine Gangabstand-/Ganglänge-Änderung, die zufällig dieselbe Batch-
-    # Zuteilung ergibt, ein bereits veraltetes Politur-Ergebnis (falsche
-    # Distanz, aus dem alten D berechnet) weiter als gültig angezeigt.
-    polish_key = (tuple(tuple(b["items"]) for b in batches), polish_time_limit, aisle_spacing, aisle_length)
+    # Der Key muss ALLES enthalten, wovon D (die Distanzmatrix) abhängt - nicht
+    # nur aisle_spacing/aisle_length (Code-Review-Fund, 2026-08-23), sondern
+    # auch aisles/positions selbst: die Batch-ITEM-INDIZES allein reichen nicht,
+    # da ein direktes Bearbeiten einer Gang-/Positions-Zelle in der Bestell-
+    # positionstabelle (st.data_editor) die Zeilen-Indizes unverändert lassen
+    # kann (kein Regenerieren, siehe gen_key in app.py), aber D trotzdem
+    # ändert - ein zweiter Fund derselben Bug-Klasse, live im Code nachvoll-
+    # zogen, nicht separat reproduziert. Ohne all das hätte eine Änderung, die
+    # zufällig dieselbe Batch-Zuteilung ergibt, ein bereits veraltetes
+    # Politur-Ergebnis (falsche Distanz, aus dem alten D berechnet) weiter als
+    # gültig angezeigt.
+    polish_key = (
+        tuple(tuple(b["items"]) for b in batches), polish_time_limit,
+        tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), aisle_spacing, aisle_length,
+    )
 
     cooldown_state_key = f"{prefix}_polish_last_solve_time"
     if cooldown_state_key not in st.session_state:

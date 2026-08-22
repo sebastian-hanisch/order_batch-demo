@@ -450,21 +450,24 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
                 "ausgeschöpft, ohne dass Optimalität bewiesen werden konnte, zeigt das Ergebnis "
                 "'Beste gefundene Lösung' statt 'Nachweislich optimal' an.",
             )
-            # aisle_spacing/aisle_length MÜSSEN Teil des Keys sein, obwohl sie die
-            # Positionen selbst nicht verändern: sie fließen in D (Distanzmatrix)
-            # ein. Ohne sie (Code-Review-Fund, 2026-08-23) blieb ein gecachtes
-            # CP-SAT-Ergebnis nach einer reinen Gangabstand-/Ganglänge-Änderung
-            # fälschlich "gültig" - cpsat_total wird unten JEDEN Rerun frisch aus
-            # dem AKTUELLEN D berechnet, während cpsat_routes (die Besuchs-
-            # reihenfolge) aus der alten Lösung stammt: die angezeigte Distanz
-            # änderte sich dadurch still mit, ohne die "Eingaben haben sich
-            # geändert"-Warnung und weiterhin als "Nachweislich optimal"
-            # etikettiert, obwohl das nie für die neue Distanzmatrix geprüft wurde.
-            current_key_cpsat = (
-                tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), tuple(order_id_col.tolist()),
-                tuple(np.round(item_sizes, 2).tolist()), capacity, num_batches_cpsat, time_limit_cpsat,
-                aisle_spacing, aisle_length,
-            )
+            # Baut auf `cache_key` auf (enthält bereits alles, wovon D UND das
+            # Batching selbst abhängen: aisles/positions/order_id_col/item_sizes/
+            # capacity_mode/capacity/aisle_spacing/aisle_length), statt dieselben
+            # Felder hier ein zweites Mal von Hand aufzulisten - genau diese
+            # Verdopplung war der Grund für einen Code-Review-Fund (2026-08-23):
+            # die handgepflegte Kopie hatte bereits capacity_mode "verloren" und
+            # zunächst auch aisle_spacing/aisle_length (nur durch Zufall bislang
+            # nicht aufgefallen, da item_sizes sich bei einem Moduswechsel
+            # ohnehin mit ändert). Ein gecachtes CP-SAT-Ergebnis blieb dadurch
+            # nach Eingabeänderungen fälschlich "gültig" - cpsat_total wird
+            # unten JEDEN Rerun frisch aus dem AKTUELLEN D berechnet, während
+            # cpsat_routes (die Besuchsreihenfolge) aus der alten Lösung stammt.
+            # Nur noch die zwei CP-SAT-spezifischen Werte ergänzen, die
+            # cache_key nicht kennt - ein künftiges neues Feld in cache_key
+            # (z. B. ein weiterer Distanz-Einflussfaktor) landet dadurch
+            # automatisch auch hier, ohne dass diese Stelle separat gepflegt
+            # werden muss.
+            current_key_cpsat = cache_key + (num_batches_cpsat, time_limit_cpsat)
 
             if "cpsat_last_solve_time" not in st.session_state:
                 st.session_state.cpsat_last_solve_time = 0.0

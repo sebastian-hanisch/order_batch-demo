@@ -816,7 +816,7 @@ jeweils die ECHTE Produktionspipeline (Konstruktion + Inter-Batch-Suche + Iterat
 
 | Szenario | max. Batch-Größe | Ø Verbesserung | Läufe mit Verbesserung | Rechenzeit |
 |---|---|---|---|---|
-| Klein (Standard, 24 Bestellungen) | 15 | 0,30% | 4/6 | 0,1-0,5s |
+| Klein (Standard, 24 Bestellungen) | 15 | 0,30% | 2/6 | 0,1-0,5s |
 | Mittel (40 Bestellungen) | 15 | 0,51% | 5/6 | 0,2-0,3s |
 | Knappe Kapazität (viele kleine Batches) | 10 | 0,06% | 2/6 | 0,2-0,4s |
 | Große Batches (wenige, volle Batches) | 40 | 0,53% | 5/6 | 1,3-3,2s |
@@ -876,6 +876,33 @@ dieser Lösung geändert" statt einer stillen Falschangabe - live im Browser bes
 automatisierter Test: die Testsuite deckt bislang ausschließlich die reinen `batch_*.py`-Funktionen
 ab, nicht app.py's Streamlit-Ablaufcode (kein `AppTest`-Setup vorhanden) - dieselbe Lücke, die den Bug
 ursprünglich unentdeckt ließ. Alle 89 bestehenden Tests bleiben unverändert grün.
+
+**Nachtrag (per `/code-review` auf denselben Fix-Commit angewendet):** Ein automatisierter Review
+fand die Lücke nicht vollständig geschlossen und einen zweiten, verwandten Mangel:
+
+1. `polish_key` enthielt nach dem ersten Fix zwar `aisle_spacing`/`aisle_length`, aber weiterhin NICHT
+   `aisles`/`positions` selbst (anders als `current_key_cpsat`, das beide schon lange hatte). Die
+   Batch-ITEM-INDIZES allein reichen nicht: ein direktes Bearbeiten einer Gang-/Positions-Zelle in der
+   Bestellpositionstabelle ändert `D`, lässt aber die Zeilen-Indizes (und damit die Batch-Zuteilung)
+   unverändert, wenn sich dadurch die Cluster-Zuordnung nicht ändert - derselbe Bug, an einer zweiten,
+   noch offenen Stelle. Fix: `aisles`/`positions` ebenfalls in `polish_key` aufgenommen. Die
+   korrigierte Schlüssel-Logik direkt gegen eine gezielte Positionsänderung geprüft (echte
+   Tupel-Ungleichheit vor/nach, nicht nur angenommen) - die Streamlit-Datentabelle selbst ist ein
+   Canvas-Grid und lässt sich nicht zuverlässig per Browser-Automatisierung bedienen (dieselbe
+   Einschränkung wie beim Batch-Auswahl-Dropdown weiter oben in dieser Session), deshalb auf dieser
+   Ebene statt per vollem UI-Klick-Test verifiziert.
+2. `current_key_cpsat` hatte dieselben vier Feldausdrücke wie `cache_key` (der Haupt-Cache-Key für
+   `_compute_solutions`, ~130 Zeilen weiter oben) von Hand dupliziert, statt ihn wiederzuverwenden -
+   und war dabei bereits selbst abgedriftet: `capacity_mode` fehlte, bislang nur zufällig folgenlos,
+   weil `item_sizes` sich bei einem Moduswechsel ohnehin mit ändert. Fix: `current_key_cpsat` baut jetzt
+   auf `cache_key` auf (`cache_key + (num_batches_cpsat, time_limit_cpsat)`) statt die Felder ein
+   zweites Mal aufzulisten - ein künftiges neues Feld in `cache_key` landet dadurch automatisch auch
+   hier, ohne dass diese Stelle separat gepflegt werden muss. Der ursprüngliche Reproduktionsschritt
+   (CP-SAT lösen, nur Gangabstand ändern) nach dem Refactor erneut live bestätigt.
+
+Zusätzlich ein Zahlendreher in der Benchmark-Tabelle oben behoben: die Zeile "Klein" nannte 4/6 statt
+korrekt 2/6 Läufe mit Verbesserung (die Rohdaten dieser Session zeigen für dieses Szenario nur 2 von 6
+Läufen mit Delta > 0 - die übrigen Zeilen und der 67%-Gesamtdurchschnitt waren bereits korrekt).
 
 ## Zwei Kapazitätsarten statt einer fixen
 
