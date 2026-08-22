@@ -366,9 +366,9 @@ def test_inter_batch_search_final_step_is_two_opt_polished():
     history = inter_batch_local_search_history(construction, orders, capacity, item_sizes, D)
     final_batches, final_routes, final_total = history[-1]
 
-    for b, r in zip(final_batches, final_routes):
-        polished_route, polished_dist = route_batch(b["items"], D)[-1]
-        assert route_distance(r, D) == pytest.approx(polished_dist)
+    for r in final_routes:
+        _cand, found = find_two_opt_move(r, D)
+        assert not found, "Finale Route sollte 2-opt-optimal sein (kein verbessernder Zug mehr)"
     assert final_total == pytest.approx(sum(route_distance(r, D) for r in final_routes))
 
 
@@ -561,9 +561,9 @@ def test_iterated_local_search_final_step_is_two_opt_polished():
     history = iterated_local_search_history(construction, orders, capacity, item_sizes, D, max_restarts=10, time_budget_s=5.0, seed=0)
     final_batches, final_routes, final_total = history[-1]
 
-    for b, r in zip(final_batches, final_routes):
-        polished_dist = route_batch(b["items"], D)[-1][1]
-        assert route_distance(r, D) == pytest.approx(polished_dist)
+    for r in final_routes:
+        _cand, found = find_two_opt_move(r, D)
+        assert not found, "Finale Route sollte 2-opt-optimal sein (kein verbessernder Zug mehr)"
 
 
 # ---------------------------------------------------------------------------

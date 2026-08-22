@@ -529,6 +529,54 @@ praktisch wichtigsten Stresstest-Szenario schneidet über mehrere unabhängige I
 jede getestete Verfeinerung schlechter ab, während die Unterschiede bei kleinen/mittleren Instanzen
 größtenteils im Rauschen liegen.
 
+## Benchmark: Zuteilung und Routing verschachtelt statt nacheinander optimiert
+
+Ursprünglich liefen Zuteilungssuche und Routen-Politur zweistufig: die Inter-Batch-Suche
+konvergierte komplett mit Nearest-Neighbor-Qualitäts-Routen, ERST DANACH wurde jeder Batch einmalig
+per 2-opt poliert. Zuteilungs-Kandidatenzüge wurden also anhand noch nicht routenoptimierter
+Distanzen bewertet - das kann zu suboptimalen Zuteilungsentscheidungen führen. Auf Nutzerfrage
+("ist das, was Won & Olafsson 2005 vorgeschlagen haben?") in der Literatur verortet: Won/Olafsson
+(2005), "Joint order batching and order picking in warehouse operations" (*Int. J. Prod. Res.*
+43(7): 1427–1442), verfolgen denselben Grundgedanken - die Batchbildung anhand der TATSÄCHLICHEN
+Routenqualität statt einer groben Näherung zu bewerten -, allerdings für eine andere Zielfunktion
+(Kommissionierzeit UND Bestellungs-Wartezeit statt hier nur Distanz) und in einem Online-Kontext mit
+Bestellungs-Ankunftszeiten, den diese Demo nicht modelliert. "Joint Order Batching and Picker
+Routing Problem" (JOBPRP) ist mittlerweile ein eigenes, aktiv beforschtes Teilgebiet mit weiteren
+Ansätzen (cluster-basierte Tabu Search, exakte Branch-and-Cut-Verfahren, ein PSO+ACO-Hybrid).
+
+Umgesetzt: ein Batch verlässt die Don't-Look-Bits-Warteschlange erst, wenn WEDER ein verbessernder
+Relocate/Swap-Zug NOCH ein verbessernder 2-opt-Zug auf seiner eigenen Route mehr gefunden wird
+(`_try_move_or_two_opt`) - dieselbe Warteschlangen-Logik wie zuvor, nur um die Routing-Nachbarschaft
+erweitert. Über mehrere unabhängige Testinstanzen (Lehre aus der Metaheuristik-Untersuchung oben:
+eine einzelne Instanz kann irreführen):
+
+| Größe | Einmalige Konvergenz | Volle ILS-Suche (gleiches Zeitbudget) |
+|---|---|---|
+| 24 Bestellungen | +1,42% | +1,29% |
+| 30 Bestellungen | +1,05% | +1,73% |
+| 80 Bestellungen, Kapazität 60 | +0,82% | +0,92% |
+
+Der erste durchweg positive Befund seit Iterated Local Search selbst - und der erste, der auch bei
+der großen Instanz nicht negativ ausfällt (anders als alle zehn zuvor getesteten
+Metaheuristik-Varianten). Kostet ~1,8-2x mehr Zeit je Konvergenz (weniger ILS-Neustarts passen ins
+Zeitbudget), aber die bessere Qualität pro Neustart gleicht das mehr als aus - anders als bei Tabu
+Search/ALNS, wo genau dieser Mechanismus zum Verlust führte.
+
+**Wichtige Einschränkung, empirisch gefunden:** 2-opt wird jetzt INKREMENTELL auf die Route
+angewendet, die durch Einfügen/Entfernen während der Zuteilungssuche entstanden ist - ein anderer,
+nicht zwingend besserer Startpunkt für 2-opt als ein kompletter Neuaufbau (2-opt kennt mehrere
+lokale Optima je nach Startroute). Eine billige Absicherung (`_apply_final_safety_net`, einmalig am
+Ende, nicht pro Neustart: je Batch die kürzere von verschachtelt gefundener Route vs. frischem
+NN+2opt-Aufbau) fängt das auf Routen-Ebene ab. Sie kann aber nicht verhindern, dass die
+verschachtelte Suche gelegentlich zu einer ANDEREN Batch-ZUTEILUNG als die alte Suche führt, die
+sich auf einer EINZELNEN Instanz als leicht schlechter herausstellt (konkret beobachtet am
+Standard-Demo-Szenario dieser App: 899m statt vorher 883m, über 10 Perturbations-Seeds hinweg
+stabil reproduzierbar, also kein Zufallsrauschen) - dieselbe Einzelinstanz-Varianz wie oben bei den
+Metaheuristik-Kandidaten, hier nur zufällig auf dem meistgesehenen Szenario. Bewusst nicht behoben:
+beide Suchpfade parallel laufen zu lassen und das bessere Ergebnis zu nehmen würde das garantieren,
+verdoppelt aber die Rechenzeit je Neustart und damit den Effizienzvorteil der Verschachtelung selbst
+- der Mittelwert über viele Instanzen zählt (siehe Benchmark-Methodik oben), nicht jede einzelne.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
@@ -547,11 +595,6 @@ je Position, das gegen eine Gesamtkapazität aufsummiert wird.
 
 ## Bewusst nicht enthalten (Scope-Entscheidungen)
 
-- **Keine gemeinsame lokale Suche über Inter-Batch- UND Route-Nachbarschaften hinweg.** Relocate/
-  Swap und 2-opt laufen nacheinander (erst Zuteilung, dann je Batch die Route poliert), nicht als
-  eine gemeinsame, verschachtelte Suche wie Or-opt+2-opt in der Tourenplanung-Demo. Für die
-  gefundenen Verbesserungen (siehe Benchmark oben) hat das gereicht - eine engere Verzahnung wäre
-  der nächste Schritt, wenn noch mehr Potenzial gehoben werden soll.
 - **Kein Move, der die Kapazität selbst neu verhandelt** (z. B. drei Bestellungen zwischen drei
   Batches gleichzeitig umschichten) - nur paarweise Relocate/Swap zwischen je zwei Batches.
 - **Sehr seltener Randfall bei absoluten Maximalwerten aller Regler gleichzeitig** (80
