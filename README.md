@@ -347,7 +347,7 @@ Suche selbst (Cheapest-Insertion-Bewertungen), nicht in der abschließenden Poli
 Trotzdem umgesetzt: mechanisch, ohne jede Verhaltensänderung (identische Ergebnisse vor/nach dem
 Fix), kein Nachteil irgendwo - dieselbe Kategorie wie die Numpy-Indexierung weiter oben.
 
-## Benchmark: zehn Metaheuristik-Varianten geprüft, keine schlägt die aktuelle Konfiguration
+## Benchmark: vierzehn Metaheuristik-Varianten geprüft - eine davon übernommen
 
 Nach den Performance-Runden auf Nutzeranfrage die Qualitätsseite noch einmal geprüft: taugt eine
 andere ILS-Akzeptanzregel oder eine andere Störung als das aktuelle "Better"-Kriterium (jeder
@@ -520,14 +520,93 @@ Prozentzahlen bei kleinen/mittleren Instanzen aus der gesamten vorangegangenen U
 neun anderen Varianten oben) beruhen auf einer einzelnen Instanz und sollten dort mit Vorsicht
 behandelt werden, nicht als verlässliche Punktschätzung.
 
-Fazit nach zehn geprüften Metaheuristik-Varianten (vier ILS-Akzeptanz-/Störungsvarianten, zwei
+Auf gezielte Nachfrage nach neuerer, problem-spezifischer Literatur (statt allgemeiner
+Metaheuristik-Paradigmen) recherchiert: **Variable Neighborhood Search** (VNS) ist mehrfach explizit
+für das Order Batching Problem untersucht worden (u. a. Scholz et al., "Variable Neighborhood
+Search strategies for the Order Batching Problem", *European Journal of Operational Research*).
+Kern: eine GEORDNETE FOLGE strukturell unterschiedlicher Störungs-Nachbarschaften statt nur
+zunehmender Störstärke (der Unterschied zur bereits gescheiterten "Adaptiven Störstärke") - bei
+Stagnation wird zur nächsten, andersartigen Nachbarschaft eskaliert, bei jeder Verbesserung sofort
+zurück zur billigsten. Getestet: N1 = bestehende Relocate-Störung, N2 = Swap-Störung, N3 =
+Ketten-Relocate (zwei Bestellungen AUS DEMSELBEN Batch atomar gemeinsam in einen anderen Batch
+verschieben - ein einzelner, unteilbarer Zug, den die bestehende Suche so nicht kennt). Aufgebaut
+auf der bereits verschachtelten Zuteilungs+2-opt-Suche (siehe nächster Abschnitt), also ein fairer
+Vergleich gegen die aktuell beste Konfiguration:
+
+| Größe | Mittel über 3 Instanzen | Streuung |
+|---|---|---|
+| 24 Bestellungen | −0,21% | −0,52% bis +0,10% |
+| 30 Bestellungen | −0,42% | −1,21% bis +0,35% |
+| 80 Bestellungen, Kapazität 60 | −0,61% | −1,64% bis −0,12% |
+
+Elfte getestete Variante, elftes Mal durchweg (wenn auch diesmal nur leicht) unterlegen - kein
+einziges positives Größen-Mittel. Plausible Erklärung, dieselbe wie bei der Worst-Order-Auswahl
+weiter oben: die zusätzliche STRUKTUR der geordneten Eskalation engt die Vielfalt der ausprobierten
+Störungen leicht ein, während die bereits sehr effektive Kombination aus Warm-Start,
+Don't-Look-Bits und verschachtelter 2-opt-Suche nahe an dem liegt, was mit diesem
+Störungsmechanismus erreichbar ist. Nicht übernommen.
+
+Auf Nachfrage, ob sich RL-Explorationsstrategien anwenden lassen (nach der zuvor als schlechter Fit
+eingestuften Idee eines vollen Deep-Reinforcement-Learning-Ansatzes): **UCB1** (Upper Confidence
+Bound, Auer et al. 2002), die klassische Bandit-Explorationsstrategie. Statt die Ziel-Batch-Wahl in
+`perturb_batches` gleichverteilt zufällig zu treffen, bekommt jedes (Bestellung, Ziel-Batch)-Paar
+einen Score aus Erfolgsrate PLUS einem expliziten Unsicherheits-Bonus für wenig ausprobierte Paare
+(`score = Erfolgsrate + c·√(ln(N)/n)`, unbesuchte Paare zuerst). Der entscheidende Unterschied zur
+bereits gescheiterten Pheromon-Zielwahl: reine Erfolgs-Verstärkung kann sich auf wenige "bewährte"
+Ziele einpendeln, der UCB1-Bonus verhindert das strukturell.
+
+| Größe | Mittel über 3 Instanzen | Streuung |
+|---|---|---|
+| 24 Bestellungen | +0,01% | −0,16% bis +0,11% |
+| 30 Bestellungen | **+0,50%** | −0,04% bis +0,78% |
+| 80 Bestellungen, Kapazität 60 | **+0,19%** | −0,12% bis +0,75% |
+
+Die erste Variante seit der verschachtelten Zuteilungs+Routing-Suche (siehe nächster Abschnitt), die
+bei KEINER Instanzgröße im Mittel schlechter abschneidet - kleiner als der dortige Gewinn
+(+0,8-1,7%), aber der einzige durchweg nicht-negative Befund unter allen zwölf geprüften
+Metaheuristik-Varianten. **Übernommen**, trotz des zusätzlichen Zustands (Versuchs-/Erfolgszähler je
+Bestellung-Batch-Paar über alle ILS-Neustarts hinweg), da es das erste Ergebnis seiner Art ist, nicht
+weil der Gewinn für sich genommen riesig wäre.
+
+Auf Nachfrage, ob sich der UCB1-Erfolg noch ausbauen lässt ("wir wissen jetzt, dass mehr Exploration
+gut ist - gibt's noch bessere Ansätze, z. B. Novelty Search?"), zunächst eine Korrektur der Prämisse:
+nicht "mehr Exploration" war der Erfolgsfaktor - Random Walk, Simulated Annealing und ALNS waren
+alle explorativer als die Baseline und sind alle gescheitert. UCB1 hat spezifisch geholfen, weil es
+die Vielfalt der bestehenden Zufallsauswahl NICHT reduziert (jede Option wird garantiert mindestens
+einmal probiert), sondern nur eine zusätzliche Gewichtung ergänzt. Zwei naheliegende Erweiterungen
+DERSELBEN erfolgreichen Idee trotzdem geprüft, beide gegen die jetzt produktive UCB1-Baseline (nicht
+gegen die alte Zufallsversion):
+
+- **Thompson Sampling** statt UCB1: probabilistisch (Beta-Verteilung je (Bestellung,Ziel)-Paar, bei
+  jeder Wahl daraus sampeln) statt deterministischer Score-Formel - der andere große Bandit-Klassiker,
+  oft mit Vorteilen bei verrauschten Belohnungssignalen (unser Verbessert-Ja/Nein hängt vom kompletten
+  nachgelagerten Suchergebnis ab, ist also durchaus verrauscht).
+- **UCB1 auch für die QUELL-Auswahl** (welche Bestellung überhaupt verschoben wird, bisher weiterhin
+  rein zufällig) - anders als die bereits gescheiterte rein-gierige Worst-Order-Auswahl schließt
+  UCB1s Bonus nie eine Option komplett aus.
+
+| Größe | Thompson Sampling | UCB1 auch für Quelle |
+|---|---|---|
+| 24 Bestellungen | −0,00% (Wash) | −0,23% |
+| 30 Bestellungen | −0,24% | **−1,75%** |
+| 80 Bestellungen, Kapazität 60 | −0,36% | −0,36% |
+
+Beide schlechter, keine übernommen. Thompson Sampling bringt hier keinen Vorteil gegenüber UCB1s
+fester Formel - eher im Gegenteil. UCB1 für die Quell-Auswahl ist klarer negativ (besonders bei 30
+Bestellungen): obwohl der Explorationsbonus nie eine Option komplett ausschließt, kostet schon die
+bloße Umgewichtung, WELCHE Bestellung verschoben wird, etwas Wertvolles - dieselbe Grundrichtung wie
+bei der gescheiterten Worst-Order-Auswahl, nur milder. Fazit: der UCB1-Gewinn saß offenbar genau in
+der schmalen Kombination "nur für die Ziel-Wahl" - weder ein anderer Bandit-Algorithmus noch dieselbe
+Idee auf mehr Entscheidungspunkte auszuweiten, verbessert das weiter.
+
+Fazit nach vierzehn geprüften Metaheuristik-Varianten (vier ILS-Akzeptanz-/Störungsvarianten, zwei
 grundsätzlich andere Paradigmen als Vollersatz - Tabu Search, ALNS -, vier dosierte Kombinationen
-derselben Ideen einschließlich der Pheromon-Zielwahl): die aktuelle Kombination aus
-Greedy-Seed/Zonen-Sweep-Konstruktion, warmgestarteter ILS+DLB-Suche, "Better"-Akzeptanz und reiner,
-zufälliger Relocate-Störung ist für dieses Problem robust getroffen - speziell beim größten,
-praktisch wichtigsten Stresstest-Szenario schneidet über mehrere unabhängige Instanzen bestätigt
-jede getestete Verfeinerung schlechter ab, während die Unterschiede bei kleinen/mittleren Instanzen
-größtenteils im Rauschen liegen.
+derselben Ideen einschließlich der Pheromon-Zielwahl, Variable Neighborhood Search als
+problem-spezifisch literaturbelegter Kandidat, UCB1 als RL-Explorationsstrategie, sowie zwei
+Erweiterungen von UCB1 selbst): dreizehn der vierzehn Varianten schlagen die aktuelle Konfiguration
+nicht - speziell beim größten, praktisch wichtigsten Stresstest-Szenario schneidet über mehrere
+unabhängige Instanzen bestätigt fast jede getestete Verfeinerung schlechter ab. UCB1 (nur für die
+Ziel-Batch-Wahl) ist die einzige Ausnahme und wurde übernommen.
 
 ## Benchmark: Zuteilung und Routing verschachtelt statt nacheinander optimiert
 

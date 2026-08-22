@@ -55,6 +55,17 @@ ILS_TIME_BUDGET_S = 1.5
 ILS_MAX_RESTARTS = 40
 ILS_PERTURB_STRENGTH = 2
 
+# UCB1 (Auer et al. 2002, klassische Bandit-Explorationsstrategie aus dem
+# RL-Bereich, auf Nutzeranfrage ergänzt): die Ziel-Batch-Wahl in
+# perturb_batches ist nicht mehr gleichverteilt zufällig, sondern gewichtet
+# nach Erfolgsrate PLUS einem expliziten Unsicherheits-Bonus für wenig
+# ausprobierte (Bestellung, Ziel-Batch)-Paare - anders als die zuvor
+# verworfene reine Erfolgs-Verstärkung (Pheromon-Zielwahl) verhindert der
+# Bonus strukturell, dass sich die Auswahl auf wenige "bewährte" Ziele
+# einpendelt. UCB_EXPLORATION_C=1.4 (~sqrt(2)) ist die in der Literatur für
+# binäre [0,1]-Belohnungen übliche Konstante, siehe README-Benchmark.
+UCB_EXPLORATION_C = 1.4
+
 # CP-SAT-Vergleichslöser (batch_ortools_solver.py): auf Nutzeranfrage
 # ergänzt, um kleine Instanzen exakt (oder nahe-exakt) lösen und mit den
 # eigenen Heuristiken vergleichen zu können. CPSAT_MAX_MODEL_SIZE begrenzt

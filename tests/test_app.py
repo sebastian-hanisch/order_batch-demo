@@ -27,6 +27,7 @@ from batch_evaluation import (
 )
 from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import (
+    _select_ucb_target,
     _try_moves_from_batch,
     find_two_opt_move,
     inter_batch_local_search_history,
@@ -479,7 +480,7 @@ def test_perturb_batches_preserves_all_orders_exactly_once():
     construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
 
     rng = random.Random(1)
-    perturbed, touched = perturb_batches(construction, orders, capacity, item_sizes, rng, n_moves=3)
+    perturbed, touched, decisions = perturb_batches(construction, orders, capacity, item_sizes, rng, {}, {}, 0, n_moves=3)
 
     covered = sorted(oid for b in perturbed for oid in b["order_ids"])
     assert covered == sorted(orders.keys())
@@ -489,6 +490,7 @@ def test_perturb_batches_preserves_all_orders_exactly_once():
             assert oid not in seen, "Bestellung wurde in mehreren Batches gefunden"
             seen.add(oid)
     assert touched.issubset(set(range(len(perturbed))))
+    assert isinstance(decisions, list)
 
 
 def test_perturb_batches_respects_capacity():
@@ -498,10 +500,27 @@ def test_perturb_batches_respects_capacity():
     construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
 
     rng = random.Random(2)
-    perturbed, _touched = perturb_batches(construction, orders, capacity, item_sizes, rng, n_moves=5)
+    perturbed, _touched, _decisions = perturb_batches(construction, orders, capacity, item_sizes, rng, {}, {}, 0, n_moves=5)
 
     for b in perturbed:
         assert batch_capacity_size(b["items"], item_sizes) <= capacity + 1e-6
+
+
+def test_select_ucb_target_prefers_untried_over_tried_regardless_of_success_rate():
+    # UCB1-Kerngarantie: ein noch nie versuchtes (Bestellung, Ziel)-Paar
+    # gewinnt immer gegen ein bereits (auch erfolgreich) versuchtes - der
+    # Unsicherheits-Bonus ist bei n=0 unendlich.
+    ucb_tries = {(1, 0): 20}
+    ucb_successes = {(1, 0): 20}  # Batch 0: bisher immer erfolgreich
+    chosen = _select_ucb_target(oid=1, candidates_j=[0, 1], ucb_tries=ucb_tries, ucb_successes=ucb_successes, ucb_total=20, c=1.4)
+    assert chosen == 1, "Noch nie versuchtes Ziel sollte trotz perfekter Erfolgsbilanz des anderen gewinnen"
+
+
+def test_select_ucb_target_prefers_higher_success_rate_once_all_tried():
+    ucb_tries = {(1, 0): 10, (1, 1): 10}
+    ucb_successes = {(1, 0): 8, (1, 1): 2}
+    chosen = _select_ucb_target(oid=1, candidates_j=[0, 1], ucb_tries=ucb_tries, ucb_successes=ucb_successes, ucb_total=20, c=0.0)
+    assert chosen == 0, "Ohne Explorationsbonus (c=0) sollte die hoehere Erfolgsrate gewinnen"
 
 
 def test_iterated_local_search_never_worse_than_plain_local_search():

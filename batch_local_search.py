@@ -64,15 +64,29 @@ Drei Ebenen lokaler Suche:
    Konstruktions-/Clustering-Alternativen (siehe README-Abschnitte dazu)
    der erste Hebel seit der ursprünglichen Inter-Batch-Suche, der einen
    konsistenten zusätzlichen Gewinn brachte.
+
+   Die Ziel-Batch-Wahl innerhalb der Störung (perturb_batches) nutzt UCB1
+   (Auer et al. 2002, Bandit-Explorationsstrategie aus dem RL-Bereich) statt
+   gleichverteiltem Zufall - auf Nutzeranfrage nach RL-Explorationsstrategien
+   geprüft und als einzige von elf zuvor getesteten Metaheuristik-Varianten
+   bei KEINER Instanzgröße im Mittel schlechter (siehe README-Benchmark).
 """
 
+import math
 import random
 import time
 from collections import deque
 
 import numpy as np
 
-from batch_constants import EPS, ILS_MAX_RESTARTS, ILS_PERTURB_STRENGTH, ILS_TIME_BUDGET_S, LOCAL_SEARCH_MAX_MOVES
+from batch_constants import (
+    EPS,
+    ILS_MAX_RESTARTS,
+    ILS_PERTURB_STRENGTH,
+    ILS_TIME_BUDGET_S,
+    LOCAL_SEARCH_MAX_MOVES,
+    UCB_EXPLORATION_C,
+)
 from batch_evaluation import route_distance
 
 
@@ -415,26 +429,63 @@ def inter_batch_local_search_history(batches, orders, capacity, item_sizes, D, m
     return history
 
 
-def perturb_batches(batches, orders, capacity, item_sizes, rng, n_moves=ILS_PERTURB_STRENGTH):
+def _select_ucb_target(oid, candidates_j, ucb_tries, ucb_successes, ucb_total, c):
+    """UCB1 (Auer et al. 2002): wählt unter den zulässigen Ziel-Batches
+    dasjenige mit dem höchsten Score aus Erfolgsrate PLUS Unsicherheits-Bonus
+    (score = Erfolgsrate + c*sqrt(ln(N)/n), N = Gesamtzahl bisheriger
+    Versuche). Noch nie für diese Bestellung probierte Ziele bekommen
+    score=∞ (Standard-UCB1-Initialisierung: erst alles mindestens einmal
+    versuchen) - das erste unbesuchte Ziel in Iterationsreihenfolge gewinnt
+    dabei immer, ein simpler, aber korrekter Kurzschluss (Ties werden sonst
+    nie durch einen späteren ebenfalls-unbesuchten Kandidaten ersetzt)."""
+    best_j, best_score = None, None
+    for j in candidates_j:
+        n = ucb_tries.get((oid, j), 0)
+        if n == 0:
+            return j
+        s = ucb_successes.get((oid, j), 0)
+        score = (s / n) + c * math.sqrt(math.log(ucb_total + 1) / n)
+        if best_score is None or score > best_score:
+            best_score, best_j = score, j
+    return best_j
+
+
+def perturb_batches(batches, orders, capacity, item_sizes, rng, ucb_tries, ucb_successes, ucb_total, n_moves=ILS_PERTURB_STRENGTH, ucb_c=UCB_EXPLORATION_C):
     """Verschiebt n_moves zufällige, zulässige Bestellungen in einen anderen
     (noch passenden) Batch - OHNE Bewertung, auch wenn das die Distanz
     kurzfristig verschlechtert. Diversifikation für Iterated Local Search:
     ohne eine solche Störung würde die nachfolgende Lokalsuche immer wieder
     im selben lokalen Optimum landen, aus dem sie gestartet ist.
 
+    Die QUELL-Bestellung wird weiterhin gleichverteilt zufällig gewählt
+    (eine gezielte "schlechteste zuerst"-Auswahl wurde geprüft und verworfen,
+    siehe README - sie schränkt die Vielfalt der ausprobierten Züge ein).
+    Die ZIEL-Batch-Wahl dagegen nutzt UCB1 (siehe _select_ucb_target,
+    Auer et al. 2002) statt gleichverteiltem Zufall - im Gegensatz zur
+    ebenfalls verworfenen reinen Erfolgs-Verstärkung (Pheromon-Zielwahl,
+    siehe README) verhindert der explizite Unsicherheits-Bonus, dass sich
+    die Auswahl auf wenige "bewährte" Ziele einpendelt. `ucb_tries`/
+    `ucb_successes` (Dicts, Schlüssel (Bestellung, Ziel-Batch)) und
+    `ucb_total` (Gesamtzahl bisheriger Versuche) werden vom Aufrufer über
+    alle ILS-Neustarts hinweg mitgeführt und nach jedem Neustart aktualisiert
+    (siehe iterated_local_search_history) - hier nur gelesen, nicht selbst
+    verändert.
+
     Gibt zusätzlich zurück, WELCHE Batch-Indizes tatsächlich verändert
     wurden (für den Warm-Start in iterated_local_search_history: nur diese
     Batches müssen nach der Störung neu geprüft werden, alle anderen
     übernehmen ihre Route/Distanz unverändert aus der vorherigen besten
-    Lösung). Leere Batches werden am Ende herausgefiltert; die
-    zurückgegebenen Indizes werden dabei passend umgerechnet - auch wenn
-    dieser Fall dank der "len(order_ids) <= 1: continue"-Absicherung nie
-    eintritt (ein Batch mit nur einer Bestellung wird nie als Quelle
-    gewählt, kann also nie leer zurückbleiben), kostet die Absicherung
-    nichts und macht die Funktion robust gegen künftige Änderungen an
-    dieser Regel."""
+    Lösung) sowie die Liste der getroffenen (Bestellung, Ziel-Batch)-
+    Entscheidungen (für die UCB1-Aktualisierung nach dem Neustart). Leere
+    Batches werden am Ende herausgefiltert; die zurückgegebenen Indizes
+    werden dabei passend umgerechnet - auch wenn dieser Fall dank der
+    "len(order_ids) <= 1: continue"-Absicherung nie eintritt (ein Batch mit
+    nur einer Bestellung wird nie als Quelle gewählt, kann also nie leer
+    zurückbleiben), kostet die Absicherung nichts und macht die Funktion
+    robust gegen künftige Änderungen an dieser Regel."""
     batches = [dict(b) for b in batches]
     touched = set()
+    decisions = []
     for _ in range(n_moves):
         if len(batches) < 2:
             break
@@ -450,15 +501,16 @@ def perturb_batches(batches, orders, capacity, item_sizes, rng, n_moves=ILS_PERT
         ]
         if not candidates_j:
             continue
-        j = rng.choice(candidates_j)
+        j = _select_ucb_target(oid, candidates_j, ucb_tries, ucb_successes, ucb_total, ucb_c)
         batches[i] = {"order_ids": [o for o in batches[i]["order_ids"] if o != oid], "items": [k for k in batches[i]["items"] if k not in order_items]}
         batches[j] = {"order_ids": batches[j]["order_ids"] + [oid], "items": batches[j]["items"] + order_items}
         touched.update({i, j})
+        decisions.append((oid, j))
     kept = [(idx, b) for idx, b in enumerate(batches) if b["order_ids"]]
     new_batches = [b for _, b in kept]
     index_map = {old: new for new, (old, _) in enumerate(kept)}
     touched_remapped = {index_map[t] for t in touched if t in index_map}
-    return new_batches, touched_remapped
+    return new_batches, touched_remapped, decisions
 
 
 def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_restarts=ILS_MAX_RESTARTS, time_budget_s=ILS_TIME_BUDGET_S, perturb_strength=ILS_PERTURB_STRENGTH, seed=None, max_moves=LOCAL_SEARCH_MAX_MOVES):
@@ -490,17 +542,27 @@ def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_
     Batches "durchlaufen"), sondern findet auch tendenziell bessere
     Ergebnisse: eine kalt bei Batch 0 gestartete Suche verbraucht ihr
     First-Improvement-Zugbudget oft an längst optimierten Batches, bevor sie
-    überhaupt bei der eigentlichen Störungsstelle ankommt."""
+    überhaupt bei der eigentlichen Störungsstelle ankommt.
+
+    UCB1-ZIELWAHL (siehe README-Benchmark): `ucb_tries`/`ucb_successes`
+    zählen über ALLE Neustarts hinweg, wie oft welches (Bestellung,
+    Ziel-Batch)-Paar in perturb_batches gewählt wurde und wie oft das zu
+    einer neuen besten Lösung führte - nach jedem Neustart aktualisiert,
+    unabhängig davon, ob er selbst verbessert hat (auch Fehlschläge zählen
+    als "Versuch", nur nicht als "Erfolg")."""
     rng = random.Random(seed)
     history = _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves)
     best_batches, best_routes, best_dist = history[-1]
     best_dists = [route_distance(r, D) for r in best_routes]
 
+    ucb_tries, ucb_successes, ucb_total = {}, {}, 0
     t_start = time.time()
     for _ in range(max_restarts):
         if time.time() - t_start > time_budget_s:
             break
-        perturbed, touched = perturb_batches(best_batches, orders, capacity, item_sizes, rng, perturb_strength)
+        perturbed, touched, decisions = perturb_batches(
+            best_batches, orders, capacity, item_sizes, rng, ucb_tries, ucb_successes, ucb_total, perturb_strength
+        )
 
         cand_routes, cand_dists = [], []
         for idx, b in enumerate(perturbed):
@@ -517,7 +579,13 @@ def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_
             perturbed, cand_routes, cand_dists, orders, capacity, item_sizes, D, active_init, max_moves
         )
         cand_batches, cand_routes, cand_dist = cand_history[-1]
-        if cand_dist < best_dist - EPS:
+        improved = cand_dist < best_dist - EPS
+        for oid, j in decisions:
+            ucb_tries[(oid, j)] = ucb_tries.get((oid, j), 0) + 1
+            if improved:
+                ucb_successes[(oid, j)] = ucb_successes.get((oid, j), 0) + 1
+        ucb_total += 1
+        if improved:
             best_batches, best_routes, best_dist = cand_batches, cand_routes, cand_dist
             best_dists = [route_distance(r, D) for r in best_routes]
             history.append((best_batches, best_routes, best_dist))
