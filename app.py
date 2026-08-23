@@ -626,8 +626,9 @@ with st.expander("Wie funktioniert diese Demo?"):
 Lagerpositionen abgelaufen und gepickt. Ohne Batching bedeutet das: eine eigene Tour je
 Bestellung. Beim **Order Batching** werden mehrere Bestellungen zu einem gemeinsamen Batch
 zusammengefasst, den ein Kommissionierer in **einer** Tour abarbeitet - begrenzt durch eine
-Kapazität. Das Grundproblem geht auf Gademann & van de Velde (2005) zurück und ist in der
-Warehousing-Literatur gut dokumentiert.
+Kapazität. Das Grundproblem geht auf frühe Arbeiten wie Elsayed (1981) zurück und ist seitdem
+in der Warehousing-Literatur gut dokumentiert; das hier verwendete Modell (paralleles
+Gang-Layout, Minimierung der gesamten Laufzeit) folgt insbesondere Gademann & van de Velde (2005).
 
 **Lagerlayout:** Parallele Gänge zwischen einer vorderen und einer hinteren Quergasse - das in
 der Kommissionier-Literatur übliche Grundmodell (z. B. bei Roodbergen & de Koster für

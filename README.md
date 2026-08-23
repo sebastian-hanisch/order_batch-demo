@@ -1162,6 +1162,36 @@ wären als "Inter-Batch- Suche" bzw. "Greedy-Seed/ Zonen-Sweep" mit überflüssi
 gerendert worden) - beide vor dem Testen bemerkt und behoben, live im Browser bestätigt (kein
 "Nutzeranfrage" mehr im Expander, keine der beiden Leerzeichen-Varianten im gerenderten Text).
 
+## Bugfix: Literaturverweis behauptete falsches Gründungsjahr des Order-Batching-Problems
+
+Auf Nutzerfrage ("Sind die Literaturverweise korrekt? Grundproblem von 2005 klingt merkwürdig")
+alle Zitate in App-Texten und Code-Kommentaren per Web-Recherche gegen die tatsächlichen
+Publikationen geprüft. Der Verdacht bestätigte sich für genau eine Stelle: Der "Wie funktioniert
+diese Demo?"-Expander (app.py) behauptete "Das Grundproblem geht auf Gademann & van de Velde
+(2005) zurück" - das Order Batching Problem als Forschungsfeld ist aber deutlich älter. Früheste
+identifizierte Arbeit: Elsayed, E.A. (1981), "Algorithms for Optimal Material Handling in
+Automatic Warehousing Systems", *International Journal of Production Research* 19(5), 525-535,
+gefolgt von Elsayed & Stern (1983) und Gibson & Sharp (1992), "Order Batching Procedures",
+*European Journal of Operational Research*. Gademann & van de Velde (2005) ist ein reales, korrekt
+zitiertes Paper - aber eine spätere Arbeit zu einem spezifischen Modell (paralleles Gang-Layout,
+Laufzeit-Minimierung), nicht die Begründung des Forschungsfelds. Genau dieses spezifische Modell
+folgt tatsächlich Gademann & van de Velde, das bleibt an den anderen Stellen (`batch_construction.py`-
+Docstring, README-Einleitung) unverändert korrekt attribuiert - nur die "Grundproblem geht zurück
+auf..."-Formulierung im App-Text war falsch.
+
+**Fix:** Text umformuliert auf "Das Grundproblem geht auf frühe Arbeiten wie Elsayed (1981) zurück
+[...]; das hier verwendete Modell [...] folgt insbesondere Gademann & van de Velde (2005)" - beide
+Zitate bleiben erhalten, aber jedes an der fachlich zutreffenden Stelle.
+
+**Die übrigen Zitate wurden ebenfalls stichprobenartig gegen echte Publikationen geprüft** (Autoren,
+Jahr, Titel, Journal) und für korrekt befunden: Won & Olafsson (2005), "Joint order batching and
+order picking in warehouse operations", *Int. J. Prod. Res.* 43(7); Ratliff & Rosenthal (1983),
+"Order-Picking in a Rectangular Warehouse...", *Operations Research* 31(3); Roodbergen & de Koster
+(2001a/b) zu S-Shape/Return/Largest-Gap- und Zwei-Block-Routing; Bentley (1992), "Fast Algorithms
+for Geometric Traveling Salesman Problems" (Don't-Look-Bits); Auer, Cesa-Bianchi & Fischer (2002),
+"Finite-time Analysis of the Multiarmed Bandit Problem" (UCB1); Lourenço, Martin & Stützle (2003),
+"Iterated Local Search" im *Handbook of Metaheuristics*.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
