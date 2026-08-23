@@ -654,10 +654,10 @@ dadurch bevorzugt im selben Batch, was Gangwechsel reduziert.
 
 **Verschachtelte Zuteilungs- und Routen-Suche:** Nach der ersten Batch-Bildung ist noch zweierlei
 offen: welche Bestellungen zusammen in einem Batch landen, UND in welcher Reihenfolge ein Batch
-seine Positionen abläuft (ein eigenständiges kleines Rundreiseproblem je Batch). Auf Nutzeranfrage
-ergänzt, nachdem ein Benchmark gegen das echte Optimum (Vollenumeration auf winzigen Instanzen)
-zeigte, dass Greedy-Seed/Zonen-Sweep allein im Schnitt noch 8-10% zurückliegen: eine Inter-Batch-
-Suche verschiebt (Relocate) oder tauscht (Swap) Bestellungen zwischen Batches, wenn das die
+seine Positionen abläuft (ein eigenständiges kleines Rundreiseproblem je Batch). Ein Benchmark
+gegen das echte Optimum (Vollenumeration auf winzigen Instanzen) zeigt, dass Greedy-Seed/Zonen-Sweep
+allein im Schnitt noch 8-10% zurückliegen: eine Inter-Batch-Suche verschiebt
+(Relocate) oder tauscht (Swap) Bestellungen zwischen Batches, wenn das die
 Gesamtdistanz senkt - VERSCHACHTELT mit 2-opt-Zügen auf den einzelnen Batch-Routen, statt beides
 nacheinander abzuarbeiten. Ein Batch gilt erst dann als "fertig", wenn WEDER eine bessere Zuteilung
 NOCH eine bessere Route mehr gefunden wird. Grund für die Verschachtelung: bewertet man Zuteilungs-
@@ -671,7 +671,7 @@ insgesamt rund 10-25% kürzere Gesamtdistanz gegenüber reiner Konstruktion ohne
 (konsolidierter Stufen-Benchmark, Details siehe README).
 
 **Iterated Local Search:** Reine Lokalsuche stoppt beim ERSTEN lokalen Optimum und kann es nicht
-wieder verlassen. Auf Nutzeranfrage ergänzt: nach Erreichen eines lokalen Optimums wird gezielt
+wieder verlassen - deshalb wird nach Erreichen eines lokalen Optimums gezielt
 gestört (ein paar zufällige, zulässige Bestellungen werden verschoben, auch wenn das kurzfristig
 verschlechtert) und danach erneut bis zum lokalen Optimum optimiert - wiederholt, solange ein
 Zeitbudget reicht, das beste je gefundene Ergebnis wird behalten. Bei kleinen Instanzen passen so
@@ -685,8 +685,8 @@ realistischen Instanzgrößen (Details zu beiden Erweiterungen und den zahlreich
 wieder verworfenen Alternativen - u. a. Tabu Search, Simulated Annealing, Ant/Bee-Colony-Ideen -
 siehe README).
 
-**Exakter Solver (CP-SAT):** Auf Nutzeranfrage ergänzt, um kleine Instanzen exakt lösen und mit
-den eigenen Heuristiken vergleichen zu können. CP-SAT löst Zuteilung UND Route in einem einzigen,
+**Exakter Solver (CP-SAT):** Löst kleine Instanzen exakt, um sie mit den eigenen Heuristiken
+vergleichen zu können. CP-SAT löst Zuteilung UND Route in einem einzigen,
 gemeinsam gelösten Modell: Zuordnungsvariablen je Bestellung/Batch plus ein echter Hamiltonkreis
 (`AddCircuit`) je Batch-Slot über Depot und alle Positionen, wobei nicht zugeteilte Positionen per
 Selbstschleife übersprungen werden - ein grundsätzlich anderer Lösungsweg als die oben beschriebene

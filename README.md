@@ -1142,6 +1142,26 @@ App-Text (`app.py`), Modul-Docstring (`batch_local_search.py`) und die `ILS_TIME
 (`batch_constants.py`) zitieren jetzt alle drei aus genau diesem einen Benchmark, statt wie zuvor
 unabhängig voneinander gepflegte (und dadurch auseinandergelaufene) Zahlen zu tragen.
 
+## UX: "Auf Nutzeranfrage ergänzt"-Formulierungen aus den App-Erklärtexten entfernt
+
+Auf Nutzerhinweis: Formulierungen wie "Auf Nutzeranfrage ergänzt" sind in diesem README als
+Entstehungs-Protokoll passend (siehe die vielen Benchmark-Abschnitte oben), wirken in den
+Erklärtexten der App selbst aber merkwürdig - eine Demo-Besucherin hat keinen Kontext für "wessen
+Anfrage" und die Formulierung lenkt vom eigentlichen Inhalt ab. Betroffen waren drei Stellen im
+"Wie funktioniert diese Demo?"-Expander (app.py): die Einleitung zur Inter-Batch-Suche, zu
+Iterated Local Search und zum CP-SAT-Solver. Alle drei umformuliert, ohne Informationsverlust -
+die Entwicklungshistorie ("wieso wurde das gebaut") bleibt weiterhin in den Modul-Docstrings
+(`batch_local_search.py` etc.) und im README erhalten, wo sie hingehört; nur die dem Endnutzer
+zugewandten Texte beschreiben jetzt direkt WAS die Funktion tut, nicht WARUM sie ins Backlog kam.
+Die beiden Vorkommen im app.py-Modul-Docstring (nicht user-sichtbar, da nie gerendert) blieben
+bewusst unverändert.
+
+Beim Umformulieren selbst noch einen Zeilenumbruch-Fehler produziert (derselbe Fehlertyp wie beim
+Einleitungstext oben, diesmal an zwei Stellen: "Inter-Batch-\nSuche" und "Greedy-Seed/\nZonen-Sweep"
+wären als "Inter-Batch- Suche" bzw. "Greedy-Seed/ Zonen-Sweep" mit überflüssigem Leerzeichen
+gerendert worden) - beide vor dem Testen bemerkt und behoben, live im Browser bestätigt (kein
+"Nutzeranfrage" mehr im Expander, keine der beiden Leerzeichen-Varianten im gerenderten Text).
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
