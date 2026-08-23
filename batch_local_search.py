@@ -212,6 +212,40 @@ def _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, ne
     return new_batches, new_routes, new_dists, True, {i, j}
 
 
+def _try_relocate_one(src, dst, oid, batches, routes, dists, orders, capacity, item_sizes, batch_sizes, D):
+    """Versucht, EINE Bestellung `oid` von Batch `src` nach Batch `dst` zu
+    verschieben. Der gemeinsame Kern der beiden Relocate-RICHTUNGEN in
+    _try_moves_from_batch (Code-Review-Fund, 2026-08-23, dritte Runde):
+    "verschiebe etwas AUS Batch i heraus" und "verschiebe etwas IN Batch i
+    hinein" sind dieselbe Operation mit vertauschten Rollen von Quelle und
+    Ziel, nicht zwei unabhängige Zug-Arten - die Suche wurde vorher zweimal
+    fast wortgleich (~20 Zeilen) dupliziert. Runde 2 hatte nur den
+    identischen Abschluss (_package_move) zusammengefasst, nicht diese
+    Kernlogik selbst. Gibt bei einem verbessernden, zulässigen Zug das von
+    _try_moves_from_batch erwartete Rückgabeformat zurück, sonst None -
+    der Aufrufer entscheidet selbst, in welcher Reihenfolge (oid, dst)
+    bzw. (dst, oid) durchprobiert werden, um die bisherige Suchreihenfolge
+    (und damit welcher Zug bei mehreren Verbesserungen zuerst gefunden
+    wird) unverändert zu lassen."""
+    order_items = orders[oid]
+    order_size = batch_capacity_size(order_items, item_sizes)
+    if batch_sizes[dst] + order_size > capacity + EPS:
+        return None
+    new_route_src = _remove_items(routes[src], order_items)
+    new_dist_src = route_distance(new_route_src, D)
+    new_route_dst = _cheapest_insertion(routes[dst], order_items, D)
+    new_dist_dst = route_distance(new_route_dst, D)
+    if (new_dist_src + new_dist_dst) >= (dists[src] + dists[dst]) - EPS:
+        return None
+    new_batches = [dict(b) for b in batches]
+    new_batches[src] = {
+        "order_ids": [o for o in batches[src]["order_ids"] if o != oid],
+        "items": [k for k in batches[src]["items"] if k not in order_items],
+    }
+    new_batches[dst] = {"order_ids": batches[dst]["order_ids"] + [oid], "items": batches[dst]["items"] + order_items}
+    return _package_move(routes, dists, src, dst, new_batches, new_route_src, new_route_dst, new_dist_src, new_dist_dst)
+
+
 def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_sizes, D):
     """Sucht EINEN verbessernden Zug (Relocate oder Swap), an dem Batch i
     beteiligt ist - als Quelle, als Ziel oder als Tauschpartner. Kern der
@@ -231,58 +265,37 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
 
     if len(batches[i]["order_ids"]) > 1:
         for oid in batches[i]["order_ids"]:
-            order_items = orders[oid]
-            order_size = batch_capacity_size(order_items, item_sizes)
             for j in range(n):
                 if j == i:
                     continue
-                target_size = batch_sizes[j]
-                if target_size + order_size > capacity + EPS:
-                    continue
-                new_route_i = _remove_items(routes[i], order_items)
-                new_dist_i = route_distance(new_route_i, D)
-                new_route_j = _cheapest_insertion(routes[j], order_items, D)
-                new_dist_j = route_distance(new_route_j, D)
-                if (new_dist_i + new_dist_j) < (dists[i] + dists[j]) - EPS:
-                    new_batches = [dict(b) for b in batches]
-                    new_batches[i] = {
-                        "order_ids": [o for o in batches[i]["order_ids"] if o != oid],
-                        "items": [k for k in batches[i]["items"] if k not in order_items],
-                    }
-                    new_batches[j] = {"order_ids": batches[j]["order_ids"] + [oid], "items": batches[j]["items"] + order_items}
-                    return _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, new_dist_i, new_dist_j)
+                result = _try_relocate_one(i, j, oid, batches, routes, dists, orders, capacity, item_sizes, batch_sizes, D)
+                if result is not None:
+                    return result
 
     for j in range(n):
         if j == i or len(batches[j]["order_ids"]) <= 1:
             continue
         for oid in batches[j]["order_ids"]:
-            order_items = orders[oid]
-            order_size = batch_capacity_size(order_items, item_sizes)
-            target_size = batch_sizes[i]
-            if target_size + order_size > capacity + EPS:
-                continue
-            new_route_j = _remove_items(routes[j], order_items)
-            new_dist_j = route_distance(new_route_j, D)
-            new_route_i = _cheapest_insertion(routes[i], order_items, D)
-            new_dist_i = route_distance(new_route_i, D)
-            if (new_dist_i + new_dist_j) < (dists[i] + dists[j]) - EPS:
-                new_batches = [dict(b) for b in batches]
-                new_batches[j] = {
-                    "order_ids": [o for o in batches[j]["order_ids"] if o != oid],
-                    "items": [k for k in batches[j]["items"] if k not in order_items],
-                }
-                new_batches[i] = {"order_ids": batches[i]["order_ids"] + [oid], "items": batches[i]["items"] + order_items}
-                return _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, new_dist_i, new_dist_j)
+            result = _try_relocate_one(j, i, oid, batches, routes, dists, orders, capacity, item_sizes, batch_sizes, D)
+            if result is not None:
+                return result
 
     size_i = batch_sizes[i]
+    # Bestellungsgrößen je Batch i EINMAL vorab in ein Dict, statt (wie vor
+    # diesem Code-Review-Fund) size_oid_i pro (j, oid_i)-Paar unnötig neu zu
+    # berechnen, obwohl es nur von oid_i abhängt - analog schon oben für die
+    # Batch-Ebene per `batch_sizes` gelöst, hier für die Bestell-Ebene nach-
+    # geholt (derselbe Fund, den `batch_sizes` schon einmal behoben hatte).
+    order_sizes_i = {oid: batch_capacity_size(orders[oid], item_sizes) for oid in batches[i]["order_ids"]}
     for j in range(n):
         if j == i:
             continue
         size_j = batch_sizes[j]
+        order_sizes_j = {oid: batch_capacity_size(orders[oid], item_sizes) for oid in batches[j]["order_ids"]}
         for oid_i in batches[i]["order_ids"]:
-            size_oid_i = batch_capacity_size(orders[oid_i], item_sizes)
+            size_oid_i = order_sizes_i[oid_i]
             for oid_j in batches[j]["order_ids"]:
-                size_oid_j = batch_capacity_size(orders[oid_j], item_sizes)
+                size_oid_j = order_sizes_j[oid_j]
                 if size_i - size_oid_i + size_oid_j > capacity + EPS:
                     continue
                 if size_j - size_oid_j + size_oid_i > capacity + EPS:

@@ -35,6 +35,34 @@ from batch_visualization import build_batch_detail_figure, build_warehouse_overv
 from batch_warehouse import distance_scenario_key
 
 
+def pdf_cache_key(order_ids_by_item, aisles, positions, aisle_spacing, aisle_length, item_sizes):
+    """Alles, wovon der Inhalt eines exportierten PDF-Batchplans abhängt,
+    das `generate_batch_plan_pdf_cached` selbst nicht direkt (unmaskiert)
+    als Argument erhält - für den `distance_scenario_key`-Teil bereits
+    vorhandene Funktion wiederverwendet (der Zeit-/Kosten-Abschnitt im PDF
+    hängt über die Gesamtdistanz tatsächlich von D ab, nicht nur von
+    aisles/positions selbst, daher genügt die Batch-/Routen-Zuteilung
+    allein nicht als Cache-Schlüssel)."""
+    return distance_scenario_key(aisles, positions, aisle_spacing, aisle_length) + (
+        tuple(order_ids_by_item.tolist()), tuple(np.round(item_sizes, 2).tolist()),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def generate_batch_plan_pdf_cached(label, batches, final_routes, _order_ids_by_item, _aisles, _positions, _D, capacity, capacity_mode, _item_sizes, walking_speed_mps, pick_time_s, cost_per_hour, cache_key):
+    """Cached Wrapper um generate_batch_plan_pdf (Code-Review-Fund,
+    2026-08-23, dritte Runde): das PDF wurde bislang bei JEDEM Rerun neu
+    gebaut, auch für Downloads, die nie geklickt werden, und auch bei
+    Widget-Interaktionen, die den Inhalt gar nicht betreffen - derselbe
+    Grund, aus dem `_compute_solutions`/`_build_distance_matrix_cached`
+    bereits gecacht sind. `batches`/`final_routes` sind bewusst NICHT
+    unterstrichen (anders als die Numpy-Arrays): Streamlit hasht normale
+    Listen/Dicts direkt und günstig, `cache_key` deckt nur das ab, was in
+    den unterstrichenen (von Streamlits Hashing ausgenommenen) Numpy-
+    Argumenten steckt, siehe `pdf_cache_key`."""
+    return generate_batch_plan_pdf(label, batches, final_routes, _order_ids_by_item, _aisles, _positions, _D, capacity, capacity_mode, _item_sizes, walking_speed_mps, pick_time_s, cost_per_hour)
+
+
 def render_exact_polish_section(prefix, label, batches, final_routes, total_dist, order_ids_by_item, aisles, positions, aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour):
     """Button-gesteuerte, optionale CP-SAT-Politur-Sektion (siehe
     batch_ortools_solver.py: apply_exact_tsp_polish) - löst jede Batch-Route
@@ -138,9 +166,10 @@ def render_exact_polish_section(prefix, label, batches, final_routes, total_dist
         fig_polish = build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spacing, batches, polished_routes)
         st.plotly_chart(fig_polish, width="stretch", key=f"{prefix}_polish_plot")
 
-        pdf_bytes_polish = generate_batch_plan_pdf(
+        pdf_bytes_polish = generate_batch_plan_pdf_cached(
             f"{label} + CP-SAT-Politur", batches, polished_routes, order_ids_by_item, aisles, positions, D,
             capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour,
+            pdf_cache_key(order_ids_by_item, aisles, positions, aisle_spacing, aisle_length, item_sizes),
         )
         st.download_button(
             "📄 Nachgeschärften Batchplan als PDF herunterladen", data=pdf_bytes_polish,
@@ -277,7 +306,11 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
             plot_slot.plotly_chart(f, width="stretch", key=f"{prefix}_auto_{batch_idx}_{s}")
             time.sleep(0.15)
 
-    pdf_bytes = generate_batch_plan_pdf(label, batches, final_routes, order_ids_by_item, aisles, positions, D, capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour)
+    pdf_bytes = generate_batch_plan_pdf_cached(
+        label, batches, final_routes, order_ids_by_item, aisles, positions, D, capacity, capacity_mode, item_sizes,
+        walking_speed_mps, pick_time_s, cost_per_hour,
+        pdf_cache_key(order_ids_by_item, aisles, positions, aisle_spacing, aisle_length, item_sizes),
+    )
     st.download_button(
         "📄 Batchplan als PDF herunterladen", data=pdf_bytes,
         file_name=f"batchplan_{prefix}.pdf", mime="application/pdf", key=f"{prefix}_pdf_download",

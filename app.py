@@ -59,9 +59,8 @@ from batch_evaluation import batch_capacity_excess, batch_capacity_size, classif
 from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
 from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
-from batch_pdf_export import generate_batch_plan_pdf
 from batch_presets import apply_preset, bounds, cooldown_record, cooldown_seconds_remaining, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
-from batch_ui_panel import render_batching_panel, render_exact_polish_section
+from batch_ui_panel import generate_batch_plan_pdf_cached, pdf_cache_key, render_batching_panel, render_exact_polish_section
 from batch_visualization import build_warehouse_overview_figure
 from batch_warehouse import build_distance_matrix, distance_scenario_key
 
@@ -410,7 +409,11 @@ if cost_saved > 0.5:
 fig_best = build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spacing, best_own["batches"], best_own["final_routes"])
 st.plotly_chart(fig_best, width="stretch", key="primary_best_plot")
 
-pdf_bytes_best = generate_batch_plan_pdf("Optimierter Batchplan", best_own["batches"], best_own["final_routes"], order_id_col, aisles, positions, D, capacity, capacity_mode, item_sizes, walking_speed, pick_time, cost_per_hour)
+pdf_bytes_best = generate_batch_plan_pdf_cached(
+    "Optimierter Batchplan", best_own["batches"], best_own["final_routes"], order_id_col, aisles, positions, D,
+    capacity, capacity_mode, item_sizes, walking_speed, pick_time, cost_per_hour,
+    pdf_cache_key(order_id_col, aisles, positions, aisle_spacing, aisle_length, item_sizes),
+)
 st.download_button(
     "📄 Batchplan als PDF herunterladen", data=pdf_bytes_best,
     file_name="batchplan_optimiert.pdf", mime="application/pdf", key="primary_pdf_download",
@@ -546,9 +549,10 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
                 fig_cpsat = build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spacing, cpsat_batches, cpsat_routes)
                 st.plotly_chart(fig_cpsat, width="stretch", key="cpsat_plot")
 
-                pdf_bytes_cpsat = generate_batch_plan_pdf(
+                pdf_bytes_cpsat = generate_batch_plan_pdf_cached(
                     "CP-SAT", cpsat_batches, cpsat_routes, order_id_col, aisles, positions, D, capacity,
                     capacity_mode, item_sizes, walking_speed, pick_time, cost_per_hour,
+                    pdf_cache_key(order_id_col, aisles, positions, aisle_spacing, aisle_length, item_sizes),
                 )
                 st.download_button(
                     "📄 Batchplan als PDF herunterladen", data=pdf_bytes_cpsat,

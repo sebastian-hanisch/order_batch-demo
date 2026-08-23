@@ -88,6 +88,21 @@ def distance_to_business(total_distance_m, n_items, n_batches, walking_speed_mps
     return total_hours, labor_cost, throughput_per_hour
 
 
+def _relative_gap_pct(candidate, best):
+    """Relative Distanz-Differenz von `candidate` zu `best` in Prozent -
+    gegen eine Best-Distanz nahe 0 abgesichert (sonst Division durch
+    (fast) 0). Aus classify_comparison herausgezogen (Code-Review-Fund,
+    2026-08-23, dritte Runde): dieselbe Berechnung stand vorher zweimal
+    im Funktionskörper (einmal für den schlechtesten, einmal für den
+    zweitbesten Kandidaten) - ein künftiger Fix an der EPS-Absicherung
+    oder der Vorzeichen-Richtung hätte leicht in einer der beiden Kopien
+    vergessen werden können, was all_tied/top_two_tied inkonsistent
+    zueinander hätte werden lassen."""
+    if best["total_distance"] <= EPS:
+        return 0.0
+    return 100 * (candidate["total_distance"] - best["total_distance"]) / best["total_distance"]
+
+
 def classify_comparison(candidates, tie_threshold_pct=1.0):
     """Stuft einen Methodenvergleich als eindeutig/unentschieden ein, anhand
     der relativen Differenz zur jeweils besten Gesamtdistanz - vermeidet eine
@@ -95,19 +110,10 @@ def classify_comparison(candidates, tie_threshold_pct=1.0):
     liegt (dasselbe Muster wie in der Packungsoptimierung-Demo)."""
     ranked = sorted(candidates, key=lambda c: c["total_distance"])
     best, worst = ranked[0], ranked[-1]
-    if best["total_distance"] <= EPS:
-        gap_pct = 0.0
-    else:
-        gap_pct = 100 * (worst["total_distance"] - best["total_distance"]) / best["total_distance"]
-    all_tied = gap_pct <= tie_threshold_pct
+    all_tied = _relative_gap_pct(worst, best) <= tie_threshold_pct
     top_two_tied = False
     if len(ranked) > 2 and not all_tied:
-        second = ranked[1]
-        if best["total_distance"] <= EPS:
-            top_gap_pct = 0.0
-        else:
-            top_gap_pct = 100 * (second["total_distance"] - best["total_distance"]) / best["total_distance"]
-        top_two_tied = top_gap_pct <= tie_threshold_pct
+        top_two_tied = _relative_gap_pct(ranked[1], best) <= tie_threshold_pct
     return {
         "ranked": ranked, "best": best, "worst": worst,
         "all_tied": all_tied, "top_two_tied": top_two_tied,

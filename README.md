@@ -1031,6 +1031,46 @@ starke Bestätigung, dass die Auffüll-Schleifen- und Zug-Verpackungs-Refactorin
 sind), CP-SAT-Tab-Cooldown reagiert korrekt auf die tatsächliche Solve-Zeit, Politur-Cooldown über
 den geteilten Helfer weiterhin fehlerfrei, Permalink-URL enthält weiterhin alle erwarteten Felder.
 
+## `/code-review` über die gesamte Codebasis, dritte Runde
+
+Auf Nutzeranfrage ein drittes Mal denselben Ablauf angewendet. Diesmal deutlich weniger Funde als in
+den ersten beiden Runden (3 von 5 Finder-Blickwinkeln kamen komplett leer zurück) - ein plausibles
+Zeichen, dass sich die Codebasis nach zwei gründlichen Runden tatsächlich stabilisiert hat, ehrlich
+so berichtet statt künstlich auf eine Mindestanzahl Funde aufgefüllt. Fünf echte Funde, alle
+umgesetzt:
+
+1. **Die beiden Relocate-Blöcke in `_try_moves_from_batch` sind dieselbe Operation mit
+   vertauschten Quelle/Ziel-Rollen**, keine zwei unabhängigen Zug-Arten - Runde 2 hatte nur den
+   identischen Abschluss (`_package_move`) zusammengefasst, nicht die ~40 Zeilen Kernlogik selbst.
+2. **PDF-Export lief bei JEDEM Streamlit-Rerun neu**, an jeder Aufrufstelle (Hauptergebnis,
+   CP-SAT-Tab, je Strategie-Tab, je Politur-Ergebnis) - `st.download_button` braucht die Bytes
+   vorab berechnet, war aber nirgends gecacht, obwohl genau das der Grund für
+   `_compute_solutions`/`_build_distance_matrix_cached` war.
+3. **`classify_comparison` schreibt dieselbe Gap-Prozent-Formel zweimal** im selben Funktionskörper.
+4. **Bestellungsgrößen im Tausch-Zweig von `_try_moves_from_batch` wurden redundant neu
+   berechnet** - der Batch-Ebene-Fall (`batch_sizes`) war in Runde 2 schon behoben, der
+   Bestellungs-Ebene-Fall bewusst für später zurückgestellt.
+5. **`solve_with_cpsat` und `exact_tsp_single_batch` duplizieren die Hamiltonkreis-Auslese-Logik**
+   (Knoten-für-Knoten-Rundgang ab Depot) fast wortgleich.
+
+**Fixes:** (1) neue gemeinsame Funktion `_try_relocate_one(src, dst, oid, ...)` - beide
+Relocate-Richtungen rufen sie jetzt mit vertauschten `(src, dst)` auf, bei UNVERÄNDERTER
+Verschachtelungsreihenfolge der äußeren Schleifen (damit sich an der "erste Verbesserung
+gewinnt"-Suchreihenfolge nichts ändert). (2) neue Funktionen `pdf_cache_key`/
+`generate_batch_plan_pdf_cached` (`batch_ui_panel.py`, per `@st.cache_data`), gekeyt über
+`distance_scenario_key` plus Bestellzuordnung/Artikelgrößen - `batches`/`final_routes` selbst
+bleiben bewusst unmaskiert (Streamlit hasht normale Listen/Dicts direkt und günstig). (3) neue
+Hilfsfunktion `_relative_gap_pct`. (4) zwei Bestellungsgrößen-Dicts (`order_sizes_i`/
+`order_sizes_j`) vorab je Batch statt pro Kandidatenpaar neu berechnet. (5) neue gemeinsame
+Funktion `_extract_circuit_route(solver, arc_lits)` - die Übersetzung von lokaler Knotennummer auf
+tatsächlichen Item-Index bleibt bewusst Sache der beiden Aufrufer, da sie sich unterscheidet.
+
+99/99 Tests grün (keine neuen - reiner Refactor, die bestehende Suite deckt das Verhalten bereits
+ab). Live im Browser erneut bestätigt: Standardszenario weiterhin exakt 883 m (auch nach der
+riskantesten Änderung dieser Runde, der Relocate-Vereinheitlichung), PDF-Download-Button rendert
+fehlerfrei (der Cache-Wrapper muss dafür bereits einmal erfolgreich gelaufen sein), Vergleichs-Tab
+zeigt weiterhin korrekt "Greedy-Seed-Batching liegt hier vorn".
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

@@ -47,6 +47,31 @@ from batch_evaluation import batch_capacity_size, route_distance, solution_total
 CPSAT_SCALE = 100
 
 
+def _extract_circuit_route(solver, arc_lits):
+    """Liest aus einem gelösten AddCircuit-Modell die Besuchsreihenfolge
+    (1-indizierte lokale Knotennummern, OHNE das Depot/0 selbst) aus - der
+    gemeinsame Kern von solve_with_cpsat und exact_tsp_single_batch
+    (Code-Review-Fund, 2026-08-23, dritte Runde: vorher an beiden Stellen
+    fast wortgleich dupliziert, jeweils mit einer eigenen Übersetzung von
+    lokaler Knotennummer auf tatsächlichen Item-Index - diese Übersetzung
+    bleibt bewusst Sache der Aufrufer, da sie sich je nach Kontext
+    unterscheidet). Gibt eine leere Liste zurück, wenn Knoten 0 in der
+    Lösung keine ausgehende Kante hat (z. B. ein ungenutzter Batch-Slot bei
+    solve_with_cpsat, dessen Selbstschleife dann aktiv ist)."""
+    next_node = {}
+    for (a, b), lit in arc_lits.items():
+        if solver.Value(lit):
+            next_node[a] = b
+    if 0 not in next_node:
+        return []
+    route_nodes = []
+    node = next_node[0]
+    while node != 0:
+        route_nodes.append(node)
+        node = next_node[node]
+    return route_nodes
+
+
 def estimated_model_size(n_items, num_batches):
     """Grobe Näherung an die Anzahl Bogen-Variablen des CP-SAT-Modells -
     dient als billige Vorab-Abschätzung, ob sich der Modellaufbau überhaupt
@@ -165,18 +190,10 @@ def solve_with_cpsat(orders, capacity, item_sizes, D, num_batches, time_limit_s)
 
     batches = []
     for k in range(num_batches):
-        arc_lits = arc_lits_by_batch[k]
-        next_node = {}
-        for (a, b), lit in arc_lits.items():
-            if solver.Value(lit):
-                next_node[a] = b
-        if 0 not in next_node:
+        route_nodes = _extract_circuit_route(solver, arc_lits_by_batch[k])
+        if not route_nodes:
             continue  # Batch-Slot ungenutzt (Depot-Selbstschleife aktiv)
-        route_items = []
-        node = next_node[0]
-        while node != 0:
-            route_items.append(node - 1)
-            node = next_node[node]
+        route_items = [node - 1 for node in route_nodes]
         oids = sorted(set(item_order[i] for i in route_items))
         batches.append({"order_ids": oids, "items": route_items, "route": route_items})
 
@@ -237,15 +254,8 @@ def exact_tsp_single_batch(item_indices, D, time_limit_s):
         route = list(item_indices)
         return route, route_distance(route, D), "UNKNOWN"
 
-    next_node = {}
-    for (a, b), lit in arc_lits.items():
-        if solver.Value(lit):
-            next_node[a] = b
-    route = []
-    node = next_node[0]
-    while node != 0:
-        route.append(item_indices[node - 1])
-        node = next_node[node]
+    route_nodes = _extract_circuit_route(solver, arc_lits)
+    route = [item_indices[node - 1] for node in route_nodes]
 
     status = "OPTIMAL" if cp_status == cp_model.OPTIMAL else "FEASIBLE"
     return route, route_distance(route, D), status
