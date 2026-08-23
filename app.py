@@ -248,6 +248,9 @@ with st.sidebar:
     )
     cost_per_hour = st.slider(
         "Personalkosten (€/h)", *bounds("cost_per_hour_slider"), step=0.5, key="cost_per_hour_slider",
+        help="Vollkostensatz je Arbeitsstunde (Bruttolohn plus Lohnnebenkosten und anteilige "
+        "Gemeinkosten), nicht der reine Bruttolohn - deshalb liegt der Wert deutlich über einem "
+        "typischen Stundenlohn für Lagerpersonal.",
     )
 
     st.button(

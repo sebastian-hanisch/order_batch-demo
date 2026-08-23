@@ -1192,6 +1192,30 @@ for Geometric Traveling Salesman Problems" (Don't-Look-Bits); Auer, Cesa-Bianchi
 "Finite-time Analysis of the Multiarmed Bandit Problem" (UCB1); Lourenço, Martin & Stützle (2003),
 "Iterated Local Search" im *Handbook of Metaheuristics*.
 
+## UX: Personalkosten-Regler ohne Kontext, warum der Wert höher als ein Stundenlohn liegt
+
+Auf Nutzerfrage ("Prüf bitte auch die restlichen Zahlen in der App auf Plausibilität") die übrigen
+Default-Werte (nicht die bereits geprüften Algorithmus-Prozentzahlen/Zitate) gegen reale Quellen
+geprüft: Gehgeschwindigkeit (1,3 m/s, Fachliteratur nennt 1,0-1,4 m/s für Fußkommissionierer),
+Pickzeit (18s, plausibel innerhalb der stark streuenden dokumentierten Bandbreite) und der
+Farbfehlsichtigkeits-Kommentar in `batch_constants.py` (~8% der Männer - korrekt für die hier
+relevante nord-/westeuropäische Population) waren alle unauffällig.
+
+Eine Stelle war zwar rechnerisch plausibel, aber im UI ohne jeden Kontext: **Personalkosten
+28 €/h.** Der reine Bruttolohn für Lagerarbeiter/Kommissionierer liegt 2025 in Deutschland bei ca.
+13,68-16 €/h - 28 €/h wirkt isoliert deutlich zu hoch. Rechnet man aber mit dem üblichen deutschen
+Vollkostensatz (Lohnnebenkosten ~20% plus Gemeinkosten-Aufschlag, in Summe eine gängige Faustregel
+von ca. dem 1,8-fachen des Bruttolohns), ergibt sich ca. 15 €/h × 1,8 ≈ 27 €/h - der Default ist
+also korrekt, aber nur unter dieser (bislang nirgends erklärten) Interpretation als voll beladener
+Kostensatz statt Bruttolohn. Anders als alle anderen Regler in diesem Abschnitt hatte
+"Personalkosten (€/h)" bislang gar keinen Hilfetext.
+
+**Fix:** Hilfetext ergänzt: "Vollkostensatz je Arbeitsstunde (Bruttolohn plus Lohnnebenkosten und
+anteilige Gemeinkosten), nicht der reine Bruttolohn - deshalb liegt der Wert deutlich über einem
+typischen Stundenlohn für Lagerpersonal." 99/99 Tests weiterhin grün (reiner Text-Zusatz), live im
+Browser bestätigt (Tooltip rendert korrekt, keine Server-Fehler, Standardszenario weiterhin bei den
+goldenen 883 m).
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
