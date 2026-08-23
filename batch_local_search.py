@@ -117,10 +117,18 @@ def find_two_opt_move(route, D):
     Distanzmatrix ist symmetrisch) unverändert. Macht eine Suchrunde O(n^2)
     statt O(n^3) - reines Delta, exakt dieselben Kandidaten/Ergebnisse wie
     zuvor (siehe README-Benchmark), nur ohne die pro Kandidat wiederholte
-    volle Neuberechnung."""
+    volle Neuberechnung.
+
+    Gibt das gefundene Delta mit zurück (0.0, wenn nichts gefunden wurde) -
+    Aufrufer, die die VORHERIGE Distanz bereits kennen (two_opt_history,
+    _try_move_or_two_opt), können die neue Distanz damit per einfacher
+    Addition bestimmen, statt die komplette Route erneut zu summieren
+    (Code-Review-Fund, 2026-08-23: das Delta wurde hier zwar schon berechnet,
+    aber bislang verworfen, sodass beide Aufrufer trotzdem noch einmal voll
+    neu aufsummierten)."""
     n = len(route)
     if n < 2:
-        return route, False
+        return route, False, 0.0
     nodes = [0] + [i + 1 for i in route] + [0]
     for i in range(1, n):
         for j in range(i + 1, n + 1):
@@ -129,8 +137,8 @@ def find_two_opt_move(route, D):
             delta = (D[a, c] + D[b, d]) - (D[a, b] + D[c, d])
             if delta < -EPS:
                 cand = route[: i - 1] + route[i - 1 : j][::-1] + route[j:]
-                return cand, True
-    return route, False
+                return cand, True, delta
+    return route, False, 0.0
 
 
 def two_opt_history(route, D, max_moves=LOCAL_SEARCH_MAX_MOVES):
@@ -143,12 +151,12 @@ def two_opt_history(route, D, max_moves=LOCAL_SEARCH_MAX_MOVES):
     history = [(list(current), route_distance(current, D))]
     moves = 0
     while moves < max_moves:
-        new_route, found = find_two_opt_move(current, D)
+        new_route, found, delta = find_two_opt_move(current, D)
         if not found:
             break
         current = new_route
         moves += 1
-        history.append((list(current), route_distance(current, D)))
+        history.append((list(current), history[-1][1] + delta))
     return history
 
 
@@ -199,6 +207,12 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
     (damit die Aufrufer-Warteschlange genau diese wieder als prüfenswert
     markieren kann, nicht mehr)."""
     n = len(batches)
+    # Je-Batch-Kapazitätsgröße einmalig vorab berechnen statt (wie vor dem
+    # Code-Review-Fund 2026-08-23) batches[j]["items"] pro (oid, j)-Paar neu
+    # aufzusummieren, obwohl sie nur von j abhängt - dieselbe Größe wurde in
+    # der ersten Zug-Art bislang bis zu len(order_ids)-mal unnötig neu
+    # berechnet, in der zweiten Zug-Art sogar bei jedem einzelnen Kandidaten.
+    batch_sizes = [sum(item_sizes[k] for k in b["items"]) for b in batches]
 
     if len(batches[i]["order_ids"]) > 1:
         for oid in batches[i]["order_ids"]:
@@ -207,7 +221,7 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
             for j in range(n):
                 if j == i:
                     continue
-                target_size = sum(item_sizes[k] for k in batches[j]["items"])
+                target_size = batch_sizes[j]
                 if target_size + order_size > capacity + EPS:
                     continue
                 new_route_i = _remove_items(routes[i], order_items)
@@ -233,7 +247,7 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
         for oid in batches[j]["order_ids"]:
             order_items = orders[oid]
             order_size = sum(item_sizes[k] for k in order_items)
-            target_size = sum(item_sizes[k] for k in batches[i]["items"])
+            target_size = batch_sizes[i]
             if target_size + order_size > capacity + EPS:
                 continue
             new_route_j = _remove_items(routes[j], order_items)
@@ -253,11 +267,11 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
                 new_dists[i], new_dists[j] = new_dist_i, new_dist_j
                 return new_batches, new_routes, new_dists, True, {i, j}
 
-    size_i = sum(item_sizes[k] for k in batches[i]["items"])
+    size_i = batch_sizes[i]
     for j in range(n):
         if j == i:
             continue
-        size_j = sum(item_sizes[k] for k in batches[j]["items"])
+        size_j = batch_sizes[j]
         for oid_i in batches[i]["order_ids"]:
             size_oid_i = sum(item_sizes[k] for k in orders[oid_i])
             for oid_j in batches[j]["order_ids"]:
@@ -313,12 +327,12 @@ def _try_move_or_two_opt(i, batches, routes, dists, orders, capacity, item_sizes
     if found:
         return new_batches, new_routes, new_dists, True, touched
 
-    new_route, two_opt_found = find_two_opt_move(routes[i], D)
+    new_route, two_opt_found, delta = find_two_opt_move(routes[i], D)
     if two_opt_found:
         new_routes = list(routes)
         new_routes[i] = new_route
         new_dists = list(dists)
-        new_dists[i] = route_distance(new_route, D)
+        new_dists[i] = dists[i] + delta
         return batches, new_routes, new_dists, True, {i}
 
     return batches, routes, dists, False, set()

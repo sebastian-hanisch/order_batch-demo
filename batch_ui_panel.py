@@ -31,6 +31,7 @@ from batch_evaluation import batch_capacity_size, capacity_summary_text, distanc
 from batch_ortools_solver import apply_exact_tsp_polish
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_visualization import build_batch_detail_figure, build_warehouse_overview_figure
+from batch_warehouse import distance_scenario_key
 
 
 def render_exact_polish_section(prefix, label, batches, final_routes, total_dist, order_ids_by_item, aisles, positions, aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour):
@@ -64,31 +65,44 @@ def render_exact_polish_section(prefix, label, batches, final_routes, total_dist
     # da ein direktes Bearbeiten einer Gang-/Positions-Zelle in der Bestell-
     # positionstabelle (st.data_editor) die Zeilen-Indizes unverändert lassen
     # kann (kein Regenerieren, siehe gen_key in app.py), aber D trotzdem
-    # ändert - ein zweiter Fund derselben Bug-Klasse, live im Code nachvoll-
-    # zogen, nicht separat reproduziert. Ohne all das hätte eine Änderung, die
+    # ändert. Nutzt dafür distance_scenario_key (batch_warehouse.py) statt die
+    # vier Felder hier ein drittes Mal von Hand nachzubauen - genau diese
+    # Verdopplung (unabhängig von app.py's eigenem D-Cache-Key gepflegt) war
+    # selbst ein Code-Review-Fund. Ohne all das hätte eine Änderung, die
     # zufällig dieselbe Batch-Zuteilung ergibt, ein bereits veraltetes
     # Politur-Ergebnis (falsche Distanz, aus dem alten D berechnet) weiter als
     # gültig angezeigt.
     polish_key = (
         tuple(tuple(b["items"]) for b in batches), polish_time_limit,
-        tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), aisle_spacing, aisle_length,
+        distance_scenario_key(aisles, positions, aisle_spacing, aisle_length),
     )
 
     cooldown_state_key = f"{prefix}_polish_last_solve_time"
+    cooldown_duration_key = f"{prefix}_polish_last_elapsed_s"
     if cooldown_state_key not in st.session_state:
         st.session_state[cooldown_state_key] = 0.0
+    if cooldown_duration_key not in st.session_state:
+        st.session_state[cooldown_duration_key] = 0.0
 
     polish_clicked = st.button("🎯 Touren exakt nachschärfen", key=f"{prefix}_polish_btn")
     if polish_clicked:
+        # Skaliert wie beim CP-SAT-Tab (app.py) mit der zuletzt TATSÄCHLICH
+        # verbrauchten Rechenzeit, statt eines festen Werts (Code-Review-Fund,
+        # 2026-08-23): ein Politur-Klick kann bis zu CPSAT_POLISH_TOTAL_BUDGET_S
+        # (20s) dauern - ohne Skalierung ließe sich derselbe ~20s-Job alle 5s
+        # erneut auslösen, genau das Missbrauchsmuster, vor dem der CP-SAT-Tab
+        # seinen Nutzer explizit schützt (siehe dortige Regler-Hilfe).
+        cooldown = st.session_state[cooldown_duration_key] + CPSAT_COOLDOWN_BUFFER
         since_last = time.time() - st.session_state[cooldown_state_key]
-        if since_last < CPSAT_COOLDOWN_BUFFER:
-            st.warning(f"⏳ Bitte noch {CPSAT_COOLDOWN_BUFFER - since_last:.0f}s warten, bevor Sie erneut nachschärfen.")
+        if since_last < cooldown:
+            st.warning(f"⏳ Bitte noch {cooldown - since_last:.0f}s warten, bevor Sie erneut nachschärfen.")
         else:
             with st.spinner(f"CP-SAT schärft die Touren nach (bis zu {polish_time_limit}s je Batch)..."):
                 polished_routes, polish_summary = apply_exact_tsp_polish(
                     batches, final_routes, D, polish_time_limit, CPSAT_POLISH_TOTAL_BUDGET_S,
                 )
             st.session_state[cooldown_state_key] = time.time()
+            st.session_state[cooldown_duration_key] = polish_summary["elapsed_s"]
             st.session_state[f"{prefix}_polish_result"] = {
                 "routes": polished_routes, "summary": polish_summary, "key": polish_key,
             }
@@ -223,12 +237,21 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
     # räumliche Streuung (wie viele Gänge werden angelaufen?) - Bestellungs-
     # und Positionsanzahl stehen bereits im Dropdown-Label oben, deshalb hier
     # bewusst nicht wiederholt.
+    # aisle_span ist die SPANNWEITE (max-min+1), nicht die Anzahl tatsächlich
+    # belegter Gänge - bewusst so gewählt, weil die Spannweite besser mit der
+    # tatsächlichen Routenlänge korreliert als eine reine Belegungszahl. Der
+    # Text formuliert das seit einem Code-Review-Fund (2026-08-23) auch so
+    # ("Spanne von N Gängen" statt "liegen in N Gängen") - vorher klang die
+    # Formulierung nach Belegung und war für Batches mit Lücken (z. B. nur
+    # Gang 2 und Gang 9 belegt, aber keiner dazwischen) irreführend, da sie
+    # "liegen in 8 Gängen" behauptete, obwohl nur 2 tatsächlich Positionen
+    # enthalten.
     batch_aisles = [aisles[i] for i in batch["items"]]
     min_aisle, max_aisle = min(batch_aisles), max(batch_aisles)
     aisle_span = max_aisle - min_aisle + 1
     span_word = "Gang" if aisle_span == 1 else "Gängen"
     st.caption(
-        f"📍 Die Positionen dieses Batches liegen in {aisle_span} {span_word} "
+        f"📍 Die Positionen dieses Batches erstrecken sich über eine Spanne von {aisle_span} {span_word} "
         f"(Gang {min_aisle + 1} bis {max_aisle + 1}) - je enger räumlich beieinander, desto kürzer die Route."
     )
 

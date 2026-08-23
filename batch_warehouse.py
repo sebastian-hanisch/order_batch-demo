@@ -58,3 +58,18 @@ def build_distance_matrix(aisles, positions, aisle_spacing, aisle_length):
 def aisle_x(aisle_idx, aisle_spacing):
     """x-Koordinate eines Gangs für die Visualisierung (Gang 0 bei x=0)."""
     return aisle_idx * aisle_spacing
+
+
+def distance_scenario_key(aisles, positions, aisle_spacing, aisle_length):
+    """Hashbares Tupel aus GENAU den Werten, von denen build_distance_matrix
+    abhängt - als einzige Quelle der Wahrheit dafür, wann eine Distanzmatrix
+    D noch gültig ist bzw. neu berechnet werden muss (Code-Review-Fund,
+    2026-08-23): app.py's Cache für D selbst UND batch_ui_panel.py's
+    Politur-Cache-Key (polish_key) bauten diese vier Felder bislang
+    unabhängig voneinander von Hand nach - genau das Muster, das schon
+    current_key_cpsat einmal (fehlend) und polish_key ein zweites Mal
+    (unvollständig) betraf. Direkt neben build_distance_matrix definiert,
+    damit eine künftige Änderung an dessen Parametern einen offensichtlichen,
+    co-lokalisierten Ort zum Mitpflegen hat, statt zwei entfernte Kopien in
+    app.py und batch_ui_panel.py suchen zu müssen."""
+    return (tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), aisle_spacing, aisle_length)

@@ -85,6 +85,13 @@ def _centroid_distance(c1, c2, aisle_spacing):
     return abs(a1 - a2) * aisle_spacing + abs(y1 - y2)
 
 
+# greedy_seed_batching und zone_clustering_batching teilen sich bewusst
+# dieselbe Parameterreihenfolge (..., aisle_spacing, item_sizes) - vor einem
+# Code-Review-Fund (2026-08-23) hatten die beiden sonst nahezu identischen
+# Signaturen die letzten zwei Parameter vertauscht, was zwar an den
+# bestehenden Aufrufstellen nie zu falschem Verhalten führte, aber ein
+# Aufruf-Fallstrick für künftige Änderungen war (ein Skalar landet dann
+# still dort, wo ein Array erwartet wird, oder umgekehrt).
 def greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing, item_sizes):
     cap_sizes, n_items, centroids = _order_stats(orders, aisles, positions, item_sizes)
     remaining = set(orders.keys())
@@ -122,7 +129,7 @@ def greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing, ite
     return batches
 
 
-def zone_clustering_batching(orders, capacity, aisles, positions, item_sizes, aisle_spacing):
+def zone_clustering_batching(orders, capacity, aisles, positions, aisle_spacing, item_sizes):
     cap_sizes, n_items, centroids = _order_stats(orders, aisles, positions, item_sizes)
     remaining = sorted(orders.keys(), key=lambda o: centroids[o])
     batches = []

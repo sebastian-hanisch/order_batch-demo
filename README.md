@@ -904,6 +904,70 @@ Zusätzlich ein Zahlendreher in der Benchmark-Tabelle oben behoben: die Zeile "K
 korrekt 2/6 Läufe mit Verbesserung (die Rohdaten dieser Session zeigen für dieses Szenario nur 2 von 6
 Läufen mit Delta > 0 - die übrigen Zeilen und der 67%-Gesamtdurchschnitt waren bereits korrekt).
 
+## `/code-review` über die gesamte Codebasis (alle Commits als ein Diff)
+
+Auf Nutzeranfrage ("Kannst du den Befehl auch auf alle Commits anwenden?") den strukturierten
+`/code-review`-Ablauf (8 Finder-Blickwinkel über parallele Subagenten, danach Einzelverifikation)
+nicht nur auf den letzten Commit, sondern auf den KOMPLETTEN kumulierten Diff seit dem allerersten
+Commit angewendet (`git diff` gegen den leeren Git-Baum) - im Effekt eine vollständige Durchsicht
+der gesamten ~5100-Zeilen-Codebasis. Zehn Funde, alle nach Verifikation umgesetzt:
+
+1. **`recommended_num_batches` rundete vor der Division statt danach** (`batch_ortools_solver.py`):
+   im Volumen-Kapazitätsmodus konnte das die nötige CP-SAT-Batch-Slot-Zahl systematisch
+   unterschätzen (verifiziert per Simulation, nicht nur als theoretische Rundungs-Koinzidenz:
+   capacity=5,5, total_size=533,8 über 31 Positionen ergab vorher 90 statt der tatsächlich nötigen
+   98 Slots) - eine eigentlich zulässige Instanz im CP-SAT-Tab konnte dadurch fälschlich als
+   "INFEASIBLE" erscheinen. Fix: exakt auf den echten Fließkommawerten aufrunden (`math.ceil`)
+   statt total_size/capacity vorher einzeln zu runden.
+2. **Politur-Cooldown skalierte anders als der CP-SAT-Tab-Cooldown**: der CP-SAT-Tab bremst gezielt
+   proportional zur zuletzt genutzten Rechenzeit, die neuere Politur-Sektion nutzte dagegen einen
+   festen 5s-Cooldown, obwohl ein Politur-Lauf selbst bis zu ~20s dauern kann - genau das
+   Missbrauchsmuster, vor dem der CP-SAT-Tab bewusst schützt, blieb hier offen. Fix: Cooldown
+   skaliert jetzt ebenfalls mit der zuletzt tatsächlich gemessenen Politur-Laufzeit.
+3. **`greedy_seed_batching`/`zone_clustering_batching` vertauschten die letzten zwei Parameter**
+   (`aisle_spacing`/`item_sizes`) zwischen zwei sonst identischen Signaturen - an den bestehenden
+   Aufrufstellen nie live falsch, aber ein Fallstrick für künftige Änderungen. Fix: Reihenfolge
+   angeglichen, alle Aufrufstellen (inkl. positionaler Test-Aufrufe) entsprechend angepasst.
+4. **`polish_key` dupliziert weiterhin von Hand, was `cache_key` bereits zusammensetzt**: dieselbe
+   Verdopplungs-Falle, die `current_key_cpsat` schon einmal das Vergessen von `capacity_mode`
+   kostete. Fix: neue gemeinsame Funktion `distance_scenario_key` (`batch_warehouse.py`, direkt
+   neben `build_distance_matrix` definiert) - sowohl `app.py`s `distance_key`/`cache_key` als auch
+   `polish_key` nutzen sie jetzt als einzige Quelle der Wahrheit.
+5. **Die Distanzmatrix `D` wurde bei JEDEM Rerun neu berechnet**, auch bei Widget-Interaktionen, die
+   sie gar nicht betreffen (z. B. Personalkosten-Regler) - eine O(n²)-Berechnung außerhalb jeder
+   Cache-Grenze. Fix: `_build_distance_matrix_cached` (`@st.cache_data`, Muster wie
+   `_compute_solutions`), gekeyt über `distance_scenario_key`.
+6. **Eine je-Batch-Kapazitätsgröße wurde in `_try_moves_from_batch` wiederholt neu aufsummiert**,
+   obwohl sie im jeweiligen Schleifendurchlauf konstant war (Muster war an einer dritten Stelle in
+   derselben Funktion bereits korrekt vorgehoben). Fix: einmalig vorab in `batch_sizes` berechnet,
+   an allen vier betroffenen Stellen per Lookup statt Neuberechnung genutzt.
+7. **`two_opt_history` verwarf das von `find_two_opt_move` bereits berechnete Distanz-Delta** und
+   summierte die komplette Route stattdessen bei jedem akzeptierten Zug neu auf - läuft bis zu 200x
+   je Aufruf, und wird über die gesamte Suche hinweg wiederholt aufgerufen. Fix:
+   `find_two_opt_move` gibt das Delta jetzt zusätzlich zurück, `two_opt_history` UND
+   `_try_move_or_two_opt` nutzen es per einfacher Addition statt `route_distance` neu aufzurufen.
+8. **`classify_comparison`s 3+-Kandidaten-Zweig (`top_two_tied`) hatte keinerlei Testabdeckung**,
+   obwohl die Produktion ihn mit bis zu 4 echten Kandidaten aufruft. Fix: zwei neue Tests (Zweig
+   trifft zu / trifft nicht zu, beide mit 3 Kandidaten).
+9. **Die "liegen in N Gängen"-Bildunterschrift behauptete Belegung, maß aber nur eine Spannweite**
+   (`max_aisle - min_aisle + 1`) - bei Batches mit Lücken (z. B. nur Gang 2 und Gang 9 belegt) eine
+   irreführende Übertreibung. Fix: Formulierung auf "erstrecken sich über eine Spanne von N Gängen"
+   geändert, misst weiterhin bewusst die Spannweite (korreliert besser mit der Routenlänge als eine
+   reine Belegungszahl).
+10. **Zwei Tests konnten nicht fehlschlagen, selbst wenn der geprüfte Code kaputt wäre**: eine
+    2-Item-Route hat strukturell kein nicht-benachbartes Kantenpaar, der Test war also unabhängig
+    von `find_two_opt_move`s Korrektheit grün; ein Zeitbudget-Test tolerierte das 10-fache des
+    erwarteten Werts (`elapsed < 3.0s` bei `time_budget_s=0.3`), was auch eine komplett
+    deaktivierte Prüfung nicht zuverlässig aufgefangen hätte. Fix: erster Test nutzt jetzt eine
+    5-Item-Instanz mit per Vollenumeration verifiziertem Optimum (plus ein neuer Gegentest für den
+    tatsächlichen Verbesserungsfall, inkl. Delta-Korrektheit); zweiter Test nutzt `max_restarts`
+    so hoch (1 Million), dass eine deaktivierte Zeitprüfung ~45 Minuten statt ~0,3s bräuchte -
+    gemessen: mit funktionierender Prüfung konsistent ~0,31s, Toleranz auf `< 1.0s` verschärft.
+
+Alle zehn Funde nach der Umsetzung live/per Test erneut verifiziert - 92/92 Tests grün (3 neu:
+zwei `classify_comparison`-Tests, ein `find_two_opt_move`-Verbesserungstest), CP-SAT-Tab und
+Politur-Cooldown live im Browser bestätigt.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

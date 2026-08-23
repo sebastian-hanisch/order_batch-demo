@@ -186,7 +186,7 @@ def test_zone_clustering_bestfit_avoids_wasted_capacity_regression():
     item_sizes = np.array([3.0, 3.0, 2.0, 2.0])
     capacity = 5.0
 
-    batches = zone_clustering_batching(orders, capacity, aisles, positions, item_sizes, aisle_spacing=1.0)
+    batches = zone_clustering_batching(orders, capacity, aisles, positions, item_sizes=item_sizes, aisle_spacing=1.0)
     assert len(batches) == 2
 
 
@@ -202,7 +202,7 @@ def test_batching_strategies_never_split_an_order_across_batches():
     item_sizes = _positions_sizes(aisles)
     for batches in [
         greedy_seed_batching(orders, 12, aisles, positions, 3.0, item_sizes),
-        zone_clustering_batching(orders, 12, aisles, positions, item_sizes, 3.0),
+        zone_clustering_batching(orders, 12, aisles, positions, 3.0, item_sizes),
     ]:
         seen = set()
         for b in batches:
@@ -292,13 +292,47 @@ def test_route_batch_empty_items_returns_empty_route():
     assert history == [([], 0.0)]
 
 
-def test_find_two_opt_move_on_already_optimal_two_item_route_finds_nothing():
-    aisles = np.array([0, 1])
-    positions = np.array([5.0, 5.0])
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
-    route, found = find_two_opt_move([0, 1], D)
+def test_find_two_opt_move_on_already_optimal_route_finds_nothing():
+    # Code-Review-Fund 2026-08-23: die vorherige Fassung nutzte eine 2-Item-
+    # Route, bei der strukturell KEIN nicht-benachbartes Kantenpaar existiert
+    # - der Test war damit unabhaengig davon gruen, ob find_two_opt_move
+    # tatsaechlich korrekt arbeitet. Jetzt: 5 Items, das wahre Optimum per
+    # Vollenumeration bestimmt (nicht angenommen), erst dann geprueft, dass
+    # find_two_opt_move darauf tatsaechlich nichts findet.
+    import itertools
+
+    aisles = np.array([0, 3, 1, 4, 2])
+    positions = np.array([2.0, 28.0, 15.0, 4.0, 20.0])
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
+    items = list(range(5))
+    optimal_route = min(itertools.permutations(items), key=lambda p: route_distance(list(p), D))
+    optimal_route = list(optimal_route)
+
+    route, found, delta = find_two_opt_move(optimal_route, D)
     assert found is False
-    assert route == [0, 1]
+    assert route == optimal_route
+    assert delta == 0.0
+
+
+def test_find_two_opt_move_finds_and_correctly_scores_a_real_improvement():
+    # Ergaenzt den obigen "nichts gefunden"-Fall um den positiven Fall:
+    # eine bewusst schlechte (nicht-optimale) Route, echte Distanzen
+    # verifiziert statt angenommen - prueft zugleich, dass das seit dem
+    # Code-Review zurueckgegebene Delta exakt der tatsaechlichen
+    # Distanzaenderung entspricht (Grundlage fuer die Delta-statt-
+    # Neuberechnung-Optimierung in two_opt_history/_try_move_or_two_opt).
+    aisles = np.array([0, 3, 1, 4, 2])
+    positions = np.array([2.0, 28.0, 15.0, 4.0, 20.0])
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
+    bad_route = [1, 3, 0, 4, 2]
+    bad_dist = route_distance(bad_route, D)
+
+    new_route, found, delta = find_two_opt_move(bad_route, D)
+
+    assert found is True
+    assert delta < 0
+    new_dist = route_distance(new_route, D)
+    assert bad_dist + delta == pytest.approx(new_dist)
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +367,7 @@ def test_inter_batch_search_respects_capacity():
     D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=25.0)
     capacity = 8
 
-    construction = zone_clustering_batching(orders, capacity, aisles, positions, item_sizes, aisle_spacing=3.0)
+    construction = zone_clustering_batching(orders, capacity, aisles, positions, item_sizes=item_sizes, aisle_spacing=3.0)
     history = inter_batch_local_search_history(construction, orders, capacity, item_sizes, D)
     final_batches = history[-1][0]
 
@@ -371,7 +405,7 @@ def test_inter_batch_search_final_step_is_two_opt_polished():
     final_batches, final_routes, final_total = history[-1]
 
     for r in final_routes:
-        _cand, found = find_two_opt_move(r, D)
+        _cand, found, _delta = find_two_opt_move(r, D)
         assert not found, "Finale Route sollte 2-opt-optimal sein (kein verbessernder Zug mehr)"
     assert final_total == pytest.approx(sum(route_distance(r, D) for r in final_routes))
 
@@ -648,12 +682,21 @@ def test_iterated_local_search_respects_time_budget():
     capacity = 12
     construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
 
+    # max_restarts absichtlich sehr hoch (statt z.B. 1000, Code-Review-Fund
+    # 2026-08-23): bei ~2,7ms je Neustart auf dieser Instanz (gemessen) waere
+    # die Marke von 1000 Neustarts auch OHNE funktionierende Zeitbudget-
+    # Pruefung in ca. 2,7s erreicht - ein zu grosszuegiger Toleranzwert haette
+    # eine komplett deaktivierte Pruefung nicht zuverlaessig auffangen koennen.
+    # Mit 1_000_000 Neustarts wuerde ein Ausfall der Pruefung dagegen ca.
+    # 45 Minuten dauern statt der erwarteten ~0,3s - der Test unterscheidet
+    # dadurch tatsaechlich zwischen funktionierender und kaputter Pruefung.
     t0 = time.time()
-    iterated_local_search_history(construction, orders, capacity, item_sizes, D, max_restarts=1000, time_budget_s=0.3, seed=0)
+    iterated_local_search_history(construction, orders, capacity, item_sizes, D, max_restarts=1_000_000, time_budget_s=0.3, seed=0)
     elapsed = time.time() - t0
-    # Grosszuegige Toleranz: das Zeitbudget wird nur ZWISCHEN Neustarts
-    # geprueft, ein einzelner Neustart darf es also leicht ueberschreiten.
-    assert elapsed < 3.0
+    # Grosszuegige, aber nicht beliebige Toleranz: das Zeitbudget wird nur
+    # ZWISCHEN Neustarts geprueft, ein einzelner Neustart darf es also leicht
+    # ueberschreiten - gemessen liegt elapsed konsistent bei ca. 0,31s.
+    assert elapsed < 1.0
 
 
 def test_iterated_local_search_preserves_all_orders_and_capacity():
@@ -683,7 +726,7 @@ def test_iterated_local_search_final_step_is_two_opt_polished():
     final_batches, final_routes, final_total = history[-1]
 
     for r in final_routes:
-        _cand, found = find_two_opt_move(r, D)
+        _cand, found, _delta = find_two_opt_move(r, D)
         assert not found, "Finale Route sollte 2-opt-optimal sein (kein verbessernder Zug mehr)"
 
 
@@ -779,6 +822,40 @@ def test_classify_comparison_identifies_clear_winner():
     assert result["all_tied"] is False
     assert result["best"]["key"] == "a"
     assert result["worst"]["key"] == "b"
+
+
+def test_classify_comparison_top_two_tied_with_three_candidates():
+    # Code-Review-Fund 2026-08-23: die top_two_tied-Verzweigung (len(ranked) > 2)
+    # hatte bislang keinerlei Testabdeckung, obwohl app.py sie in Produktion
+    # mit bis zu 4 echten Kandidaten (Greedy-Seed, Zonen-Sweep, optional
+    # CP-SAT) aufruft - beide bestehenden Tests oben nutzten nur 2 Kandidaten.
+    # A und B liegen innerhalb der Schwelle beieinander (0,5%), C liegt klar
+    # dahinter (50%) - insgesamt also NICHT alle gleichauf, aber die besten
+    # zwei schon.
+    candidates = [
+        {"key": "a", "label": "A", "total_distance": 100.0},
+        {"key": "b", "label": "B", "total_distance": 100.5},
+        {"key": "c", "label": "C", "total_distance": 150.0},
+    ]
+    result = classify_comparison(candidates, tie_threshold_pct=1.0)
+    assert result["all_tied"] is False
+    assert result["top_two_tied"] is True
+    assert result["is_tied"] is True
+
+
+def test_classify_comparison_top_two_not_tied_with_three_candidates():
+    # Gegenprobe zum Test oben: drei Kandidaten, bei denen auch die besten
+    # zwei außerhalb der Schwelle liegen (10%) - top_two_tied muss hier
+    # False sein, sonst wäre die Verzweigung nur pro forma geprüft.
+    candidates = [
+        {"key": "a", "label": "A", "total_distance": 100.0},
+        {"key": "b", "label": "B", "total_distance": 110.0},
+        {"key": "c", "label": "C", "total_distance": 150.0},
+    ]
+    result = classify_comparison(candidates, tie_threshold_pct=1.0)
+    assert result["all_tied"] is False
+    assert result["top_two_tied"] is False
+    assert result["is_tied"] is False
 
 
 # ---------------------------------------------------------------------------

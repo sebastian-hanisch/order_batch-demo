@@ -63,7 +63,20 @@ from batch_pdf_export import generate_batch_plan_pdf
 from batch_presets import apply_preset, bounds, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
 from batch_ui_panel import render_batching_panel, render_exact_polish_section
 from batch_visualization import build_warehouse_overview_figure
-from batch_warehouse import build_distance_matrix
+from batch_warehouse import build_distance_matrix, distance_scenario_key
+
+
+@st.cache_data(show_spinner=False)
+def _build_distance_matrix_cached(_aisles, _positions, aisle_spacing, aisle_length, distance_key):
+    """Cached Wrapper um build_distance_matrix (Code-Review-Fund, 2026-08-23):
+    ohne Cache lief die O(n²)-Distanzmatrix-Berechnung bei JEDEM Rerun neu,
+    auch bei Widget-Interaktionen, die sie gar nicht betreffen (z. B.
+    Personalkosten-Regler, Feedback-Buttons) - dasselbe Muster wie bei
+    _compute_solutions unten, nur eine Ebene früher: `distance_key` trägt
+    explizit alles, wovon die Distanzmatrix abhängt (aisles/positions/
+    aisle_spacing/aisle_length), Arrays sind wie dort per führendem
+    Unterstrich von Streamlits Hashing ausgenommen."""
+    return build_distance_matrix(_aisles, _positions, aisle_spacing, aisle_length)
 
 
 @st.cache_data(show_spinner="Batches werden gebildet und optimiert …")
@@ -91,7 +104,7 @@ def _compute_solutions(_orders, _aisles, _positions, capacity, aisle_spacing, ai
     Batch-Suche keinen Sinn (jeder Batch enthält per Definition schon genau
     eine Bestellung)."""
     greedy_construction = greedy_seed_batching(_orders, capacity, _aisles, _positions, aisle_spacing, _item_sizes)
-    zone_construction = zone_clustering_batching(_orders, capacity, _aisles, _positions, _item_sizes, aisle_spacing)
+    zone_construction = zone_clustering_batching(_orders, capacity, _aisles, _positions, aisle_spacing, _item_sizes)
     naive_batches = singleton_batches(_orders)
 
     results = {}
@@ -325,11 +338,11 @@ if max_order_size > capacity:
         "eigenen, überfüllten Batch - Bestellungen lassen sich nicht aufteilen."
     )
 
-D = build_distance_matrix(aisles, positions, aisle_spacing, aisle_length)
+distance_key = distance_scenario_key(aisles, positions, aisle_spacing, aisle_length)
+D = _build_distance_matrix_cached(aisles, positions, aisle_spacing, aisle_length, distance_key)
 
-cache_key = (
-    tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), tuple(order_id_col.tolist()),
-    tuple(np.round(item_sizes, 2).tolist()), capacity_mode, capacity, aisle_spacing, aisle_length,
+cache_key = distance_key + (
+    tuple(order_id_col.tolist()), tuple(np.round(item_sizes, 2).tolist()), capacity_mode, capacity,
 )
 results = _compute_solutions(orders, aisles, positions, capacity, aisle_spacing, aisle_length, item_sizes, D, cache_key)
 

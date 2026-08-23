@@ -38,6 +38,7 @@ bereits der reine Modellaufbau mehrere Sekunden bis Minuten, unabhängig vom
 Zeitlimit für die eigentliche Suche.
 """
 
+import math
 import time
 
 from batch_constants import EPS
@@ -58,9 +59,19 @@ def recommended_num_batches(orders, capacity, item_sizes, slack=1):
     die kleinstmögliche Anzahl (Gesamtgröße / Kapazität, aufgerundet) plus
     etwas Spielraum (slack) für ggf. bessere Aufteilungen - eng genug, um
     die Modellgröße klein zu halten, aber nie enger als das theoretische
-    Minimum."""
+    Minimum.
+
+    Rundet NICHT total_size/capacity einzeln auf ganze Zahlen, bevor
+    dividiert wird (Code-Review-Fund, 2026-08-23): das konnte im
+    Volumen-Kapazitätsmodus (fraktionale Werte) das echte Minimum
+    systematisch unterschätzen, z. B. capacity=5.5 wird durch
+    round()-vor-Division auf 6 gerundet - eine ~9% Verzerrung, die sich
+    über viele Batches zu einem zweistelligen Fehlbetrag aufsummieren
+    kann (verifiziert: total_size=533.8, capacity=5.5 lieferte vorher 90
+    statt der tatsächlich nötigen 98 Batch-Slots). Stattdessen exakt auf
+    den echten Fließkommawerten aufrunden."""
     total_size = sum(sum(item_sizes[i] for i in items) for items in orders.values())
-    minimum = max(1, -(-int(round(total_size)) // max(1, int(round(capacity))))) if capacity > 0 else len(orders)
+    minimum = max(1, math.ceil(total_size / capacity)) if capacity > 0 else len(orders)
     return min(len(orders), minimum + slack)
 
 
