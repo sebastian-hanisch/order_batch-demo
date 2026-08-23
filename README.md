@@ -128,6 +128,13 @@ realistischen Instanzgrößen (18-30 Bestellungen, kein bekanntes Optimum, aber 
 Verbesserung messbar) ergaben sich **7-18% kürzere Gesamtdistanz**, für beide Batching-Strategien
 gleichermaßen - ein deutlich größerer Hebel als die Zonen-Sweep-Nachbesserung oben.
 
+**Nachtrag:** Diese frühe Zahl (Prototyp-Benchmark, bevor Don't-Look-Bits/ILS existierten) wurde
+später durch den konsolidierten Stufen-Benchmark weiter unten ("Benchmark: konsolidierte
+Kennzahlen für Inter-Batch-Suche, verschachtelte Suche und ILS") ersetzt - derselbe Vergleich
+(Inter-Batch-Suche ggü. bereits 2-opt-polierter Konstruktion) ergab dort auf einem breiteren
+Instanz-Set 5-20%. Für die aktuell in App-Texten und Code-Kommentaren zitierten Zahlen ist dieser
+spätere Benchmark maßgeblich.
+
 **Umgesetzt, mit einer wichtigen Performance-Korrektur:** Der erste Prototyp bewertete jeden
 Kandidatenzug per komplettem Neu-Routing (volle NN+2opt-Neuberechnung) der betroffenen Batches -
 bei den größten zulässigen Szenarien (80 Bestellungen) brauchte das mehrere Minuten und wurde
@@ -1070,6 +1077,70 @@ ab). Live im Browser erneut bestätigt: Standardszenario weiterhin exakt 883 m (
 riskantesten Änderung dieser Runde, der Relocate-Vereinheitlichung), PDF-Download-Button rendert
 fehlerfrei (der Cache-Wrapper muss dafür bereits einmal erfolgreich gelaufen sein), Vergleichs-Tab
 zeigt weiterhin korrekt "Greedy-Seed-Batching liegt hier vorn".
+
+## UX: Einleitungstext war seit den größeren Suche-Erweiterungen nicht mehr aktualisiert
+
+Auf Nutzerhinweis ("Der Einleitungstext in der App scheint veraltet") geprüft: der sichtbare
+Absatz direkt unter dem Titel (nicht der bereits mehrfach aktualisierte "Wie funktioniert diese
+Demo?"-Expander) sagte noch "jede Batch-Route zusätzlich mit 2-opt Local Search verbessert" - das
+stammt offenbar aus einer frühen Phase, bevor Inter-Batch-Suche, Iterated Local Search und die
+CP-SAT-Politur ergänzt wurden, und wurde bei keiner der früheren "App-Texte prüfen"-Runden mit
+angefasst (die kümmerten sich um den Expander und die mathematische Formulierung, nicht um diesen
+kurzen Eröffnungsabsatz). Das unterschlug den eigentlichen Kern dessen, was die App leistet: nicht
+nur die Route je Batch wird optimiert, sondern auch die Batch-ZUTEILUNG selbst.
+
+Text ergänzt um "durch eine verschachtelte Lokalsuche weiter verbessert: sowohl die Batch-Zuteilung
+selbst... als auch die Route je Batch (2-opt), ergänzt um Iterated Local Search... und optional eine
+exakte CP-SAT-Politur" - bewusst weiterhin kurz gehalten (Details bleiben im Expander), nur die
+irreführende Verkürzung auf "nur 2-opt" korrigiert. Live im Browser verifiziert (inkl. eines selbst
+verursachten Zeilenumbruch-Fehlers - "Batch-\nZuteilung" wurde als "Batch- Zuteilung" mit
+überflüssigem Leerzeichen gerendert, direkt behoben und erneut bestätigt).
+
+## Benchmark: konsolidierte Kennzahlen für Inter-Batch-Suche, verschachtelte Suche und ILS
+
+Beim gründlichen Prüfen der App-Texte (Nutzeranfrage, nach der bereits behobenen Veraltung des
+Einleitungstexts oben) fiel eine Inkonsistenz auf: drei verschiedene Stellen zitierten drei
+verschiedene Zahlen für eng verwandte, aber nicht identische Vergleiche - der "Wie funktioniert
+diese Demo?"-Expander in app.py sprach von **19-26%** kürzerer Gesamtdistanz "gegenüber reiner
+Konstruktion ohne jede Verbesserung", der Modul-Docstring von `batch_local_search.py` von **8-18%**
+für die Inter-Batch-Suche allein, und der ursprüngliche Prototyp-Benchmark oben von **7-18%**. Die
+19-26%-Zahl ließ sich dabei in keiner einzigen Quelle - weder README noch Code-Kommentar -
+irgendwo tatsächlich nachweisen; sie beschrieb offenbar einen anderen (breiteren) Vergleich als die
+anderen beiden Zahlen, wurde aber nie durch einen eigenen Benchmark belegt.
+
+**Statt eine der drei Zahlen zu raten, ein neuer, einheitlicher Stufen-Benchmark**, aus dem sich
+jetzt alle drei App-/Code-Zahlen ableiten: 4 Szenarien (Standard 24/Kapazität 15, Mittel 40/15,
+Knappe Kapazität 30/10, Worst Case 80/60 - dieselben Eckwerte wie in den Benchmarks oben) × 3
+unabhängige Seeds × beide Strategien (Greedy-Seed, Zonen-Sweep) = 24 Läufe je Pipeline-Stufe. Jede
+Instanz durchläuft dieselben vier Stufen:
+
+| Stufe | Beschreibung |
+|---|---|
+| 0 | Reine Konstruktion, Routen per Nearest-Neighbor OHNE 2-opt |
+| 1 | + 2-opt je Batch (`route_batch`), OHNE Inter-Batch-Suche |
+| 2 | + Inter-Batch-Suche verschachtelt mit 2-opt (`inter_batch_local_search_history`) |
+| 3 | + Iterated Local Search obendrauf (`iterated_local_search_history`) |
+
+Daraus drei Kennzahlen, jede über alle 24 Läufe als Min-Max-Spanne:
+
+| Kennzahl | Vergleich | Ergebnis | Ersetzt |
+|---|---|---|---|
+| A: Inter-Batch-Suche-Beitrag | Stufe 1 → Stufe 2 | **5-20%** (Mittel 13,8%) | die alten 7-18%/8-18% |
+| B: verschachtelte Suche gesamt | Stufe 0 → Stufe 2 | **10-25%** (Mittel 18,0%) | das unbelegte 19-26% |
+| C: ILS-Zusatzgewinn | Stufe 2 → Stufe 3 | **0-6%** (Mittel 1,8%) | die alte 1-4,8%/0,9-4,8%-Zahl |
+
+Kennzahl A und die frühere Prototyp-Zahl (7-18%) messen denselben Vergleich auf unterschiedlichen
+Instanz-Sets - beide Spannen überlappen deutlich, die neue ist nur breiter, weil sie zusätzlich das
+Worst-Case-Szenario (80 Bestellungen, Kapazität 60) und eine knappe Kapazität (30/10) einschließt,
+in denen wenig Verschiebespielraum bleibt (Kennzahl A dort so niedrig wie 4,5%). Kennzahl B ist die
+tatsächlich zutreffende Ersetzung für die vorher unbelegte 19-26%-Zahl im Einleitungs-Expander:
+"gegenüber reiner Konstruktion ohne jede Verbesserung" bedeutet dort ausdrücklich auch ohne 2-opt
+(Stufe 0), nicht nur ohne Inter-Batch-Suche (Stufe 1) - ein systematisch größerer Vergleich als
+Kennzahl A, was erklärt, warum B durchweg über A liegt.
+
+App-Text (`app.py`), Modul-Docstring (`batch_local_search.py`) und die `ILS_TIME_BUDGET_S`-Konstante
+(`batch_constants.py`) zitieren jetzt alle drei aus genau diesem einen Benchmark, statt wie zuvor
+unabhängig voneinander gepflegte (und dadurch auseinandergelaufene) Zahlen zu tragen.
 
 ## Zwei Kapazitätsarten statt einer fixen
 

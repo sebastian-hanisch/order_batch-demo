@@ -54,8 +54,9 @@ DEFAULT_COST_PER_HOUR = 28.0
 LOCAL_SEARCH_MAX_MOVES = 200
 
 # Iterated Local Search (Perturbation + Re-Optimierung) obendrauf auf die
-# Inter-Batch-Suche: auf Nutzeranfrage benchmarkt und ergänzt (durchweg
-# 1-4,8% kürzere Distanz auf realistischen Instanzgrößen, siehe README).
+# Inter-Batch-Suche: auf Nutzeranfrage benchmarkt und ergänzt (0-6% kürzere
+# Distanz auf realistischen Instanzgrößen ggü. dem Stand vor ILS, siehe
+# README-Benchmark "konsolidierte Kennzahlen").
 # ILS_TIME_BUDGET_S begrenzt statt einer festen Neustart-Zahl bewusst die
 # ZEIT: bei kleinen Instanzen passen so viele Dutzend Neustarts in das
 # Budget, bei sehr großen (teure Einzelsuche) nur wenige oder gar keiner -

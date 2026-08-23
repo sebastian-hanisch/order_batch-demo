@@ -18,7 +18,11 @@ Drei Ebenen lokaler Suche:
    8-10% hinter dem Optimum zurückliegen (Details siehe README) - die
    Batch-ZUTEILUNG selbst blieb bislang nach der Konstruktion unangetastet.
    Mit Inter-Batch-Suche sank der Abstand zum Optimum auf 0,1%, auf
-   realistischen Instanzgrößen ergaben sich 8-18% kürzere Gesamtdistanz.
+   realistischen Instanzgrößen ergaben sich 5-20% kürzere Gesamtdistanz
+   ggü. der bereits 2-opt-polierten Konstruktion (konsolidierter Stufen-
+   Benchmark, siehe README - ersetzt eine zuvor an drei Stellen leicht
+   unterschiedlich zitierte Zahl durch einen einzigen, reproduzierbaren
+   Benchmark, aus dem auch die beiden folgenden Prozentangaben stammen).
 
    WICHTIG für die Performance: anders als route_batch (volle NN+2opt-
    Neuberechnung) bewertet die Inter-Batch-Suche Zuteilungs-Kandidatenzüge
@@ -59,8 +63,9 @@ Drei Ebenen lokaler Suche:
    einer festen Anzahl Durchläufe - das lässt kleine Instanzen viele
    Neustarts nutzen, ohne bei großen Instanzen (wo ein einzelner Durchlauf
    schon teuer ist) unbegrenzt Zeit zu verbrauchen. Auf Nutzeranfrage
-   benchmarkt: durchweg 1-4,8% kürzere Distanz auf realistischen Instanz-
-   größen (siehe README) - im Gegensatz zu allen zuvor geprüften
+   benchmarkt: 0-6% kürzere Distanz auf realistischen Instanzgrößen ggü.
+   dem Stand vor ILS (derselbe konsolidierte Stufen-Benchmark wie oben,
+   siehe README) - im Gegensatz zu allen zuvor geprüften
    Konstruktions-/Clustering-Alternativen (siehe README-Abschnitte dazu)
    der erste Hebel seit der ursprünglichen Inter-Batch-Suche, der einen
    konsistenten zusätzlichen Gewinn brachte.

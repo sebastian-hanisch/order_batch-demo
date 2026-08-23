@@ -135,10 +135,12 @@ gruppiert, dass ein Kommissionierer sie in **einer** Tour durchs Lager abarbeite
 durch eine Kapazität (max. Positionen ODER max. Volumen je Batch, umschaltbar). Zwei selbst
 implementierte Strategien - **Greedy-Seed-Batching** (klassisches Seed-Verfahren aus der
 Batching-Literatur) und **Zonen-Sweep-Batching** (gruppiert nach Lagerbereich) - werden direkt
-verglichen, jede Batch-Route zusätzlich mit **2-opt Local Search** verbessert. Zielgröße ist die
-gesamte Laufdistanz: weniger Weg bedeutet weniger Kommissionierzeit und mehr Durchsatz, ohne dass
-sich an der Zahl der zu pickenden Positionen etwas ändert - Hintergrund dazu im Expander "Wie
-funktioniert diese Demo?" unten.
+verglichen und durch eine **verschachtelte Lokalsuche** weiter verbessert: sowohl die
+Batch-Zuteilung selbst (Bestellungen zwischen Batches verschieben/tauschen) als auch die Route je
+Batch (2-opt), ergänzt um **Iterated Local Search** für gezielte Neustarts und optional eine exakte
+**CP-SAT**-Politur. Zielgröße ist die gesamte Laufdistanz: weniger Weg bedeutet weniger
+Kommissionierzeit und mehr Durchsatz, ohne dass sich an der Zahl der zu pickenden Positionen etwas
+ändert - Hintergrund dazu im Expander "Wie funktioniert diese Demo?" unten.
 """
 )
 
@@ -665,8 +667,8 @@ picking in warehouse operations". Kandidaten werden dabei per Don't-Look-Bits au
 Warteschlange "auffälliger" Batches statt eines vollen Rescans bei jeder Iteration), was bei
 größeren Instanzen bis zu 3x schneller ist, ohne das Ergebnis systematisch zu verschlechtern. Im
 Optimum-Benchmark sank der Abstand dadurch auf 0,1%; auf realistischen Instanzgrößen ergaben sich
-insgesamt rund 19-26% kürzere Gesamtdistanz gegenüber reiner Konstruktion ohne jede Verbesserung
-(Details siehe README).
+insgesamt rund 10-25% kürzere Gesamtdistanz gegenüber reiner Konstruktion ohne jede Verbesserung
+(konsolidierter Stufen-Benchmark, Details siehe README).
 
 **Iterated Local Search:** Reine Lokalsuche stoppt beim ERSTEN lokalen Optimum und kann es nicht
 wieder verlassen. Auf Nutzeranfrage ergänzt: nach Erreichen eines lokalen Optimums wird gezielt

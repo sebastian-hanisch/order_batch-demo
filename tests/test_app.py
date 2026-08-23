@@ -629,8 +629,8 @@ def test_try_moves_from_batch_finds_swap_improvement():
 
 # ---------------------------------------------------------------------------
 # Iterated Local Search (Perturbation + Neustarts obendrauf auf die
-# Inter-Batch-Suche, auf Nutzeranfrage ergaenzt - durchweg 1-4,8% kuerzere
-# Distanz auf realistischen Instanzgroessen, siehe README)
+# Inter-Batch-Suche, auf Nutzeranfrage ergaenzt - 0-6% kuerzere Distanz auf
+# realistischen Instanzgroessen ggue. dem Stand vor ILS, siehe README)
 # ---------------------------------------------------------------------------
 
 def test_perturb_batches_preserves_all_orders_exactly_once():
