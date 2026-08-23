@@ -968,6 +968,69 @@ Alle zehn Funde nach der Umsetzung live/per Test erneut verifiziert - 92/92 Test
 zwei `classify_comparison`-Tests, ein `find_two_opt_move`-Verbesserungstest), CP-SAT-Tab und
 Politur-Cooldown live im Browser bestätigt.
 
+## `/code-review` über die gesamte Codebasis, zweite Runde
+
+Auf Nutzeranfrage ("Kannst du solch ein komplettes Code Review über alle Diffs bitte gleich noch
+einmal machen?") den kompletten Ablauf ein zweites Mal auf den kumulierten Diff angewendet - diesmal
+speziell auch geprüft, ob die Fixes der ersten Runde selbst konsistent sind und ob sie neue Probleme
+eingeführt haben. Bemerkenswert: ein Finder-Agent behauptete, Streamlit-Slider/Selectbox würden
+abstürzen, wenn ihr gültiger Wertebereich unter einen gespeicherten Session-State-Wert schrumpft -
+das widersprach direkt einem Befund aus der VORHERIGEN Runde. Statt einer der beiden Behauptungen zu
+vertrauen, per `streamlit.testing.v1.AppTest` selbst nachgebaut: kein Absturz, Streamlit setzt
+den Wert graceful zurück - der Fund war falsch und wurde verworfen, bevor er umgesetzt wurde.
+Ebenso wurde ein Fund zu einer potenziell negativen "Ersparnis"-Anzeige vor der Umsetzung über 598
+zufällige Szenarien (volle Reglerspannweite) stress-getestet: schlechtester beobachteter Fall war
+Gleitkomma-Rauschen (3,4e-16), nie ein echter Verlust - der Fund blieb bestehen (die Anzeige war
+technisch ungeschützt), aber mit ehrlich eingeordneter, sehr geringer praktischer Eintrittswahr-
+scheinlichkeit.
+
+Zehn verifizierte Funde, alle umgesetzt:
+
+1. **CP-SAT-Tab-Cooldown nutzte das KONFIGURIERTE Zeitlimit, nicht die tatsächliche Laufzeit** -
+   `elapsed` wurde berechnet, aber nie für den Cooldown verwendet; ein Solve, der nach 2s von 10s
+   Limit bereits optimal bewies, musste trotzdem 10s+Puffer abwarten. Die Politur-Sektion (Runde 1)
+   nutzte dagegen schon korrekt die tatsächliche Laufzeit - ihr eigener Kommentar behauptete
+   faelschlich, das Verhalten des CP-SAT-Tabs zu spiegeln.
+2. **`sync_query_params` dupliziert `SETTING_SPECS.url_param` von Hand** (14 hart codierte
+   Literale) statt sie wie `load_permalink_settings` zu lesen - dieselbe Bug-Klasse ein drittes Mal,
+   diesmal bei der Permalink-URL statt einem Cache-Key.
+3. **Cooldown-Gate-Logik zwischen CP-SAT-Tab und Politur-Sektion dupliziert** - hing direkt mit Fund
+   1 zusammen (die Verdopplung erlaubte genau die stillschweigende Abweichung).
+4. **Je-Batch-Distanzen wurden nach jedem verbessernden ILS-Neustart komplett neu berechnet**,
+   obwohl die Suche sie bereits intern kannte (`current_dists`) - nur ihre Summe landete in der
+   Historie.
+5. **`batch_capacity_size` ~10x als rohes `sum()` reimplementiert** statt aufgerufen (drei Module).
+6. **`solution_totals` totes Code, 3 Aufrufstellen reimplementieren es inline** (app.py,
+   batch_pdf_export.py, batch_ortools_solver.py).
+7. **Auffüll-Schleifen beider Batching-Strategien fast wortgleich dupliziert.**
+8. **`_try_moves_from_batch`s drei Zug-Arten verpacken das Ergebnis je dreimal identisch.**
+9. **`math.ceil` kann durch Summierungs-Rundungsrauschen einen Batch-Slot zu viel vorschlagen**
+   (einseitig, sehr geringe Schwere).
+10. **Ersparnis-Kennzahlen (Laufdistanz/Zeit/Kosten ggü. Einzelkommissionierung) waren nicht
+    formal gegen negative Werte abgesichert** - hätte ein doppeltes Minuszeichen wie "--7%" erzeugt.
+
+**Fixes:** (1)+(3) gemeinsam gelöst über einen neuen geteilten Helfer
+`cooldown_seconds_remaining`/`cooldown_record` (`batch_presets.py`), der mit der tatsächlich
+gemessenen Laufzeit statt einem konfigurierten Limit skaliert - von beiden Aufrufstellen genutzt.
+(2) `sync_query_params` iteriert jetzt `SETTING_SPECS` und wendet `spec.caster` vor dem
+Stringifizieren an (verhindert z. B., dass ein als float gehaltener Seed als "11.0" statt "11"
+geschrieben und beim Zurücklesen mit einem stillen `ValueError` verworfen wird). (4)
+`_inter_batch_search_dlb_from_state` gibt die je-Batch-Distanzen jetzt zusätzlich zurück
+(`(history, dists)` statt nur `history`), `iterated_local_search_history` übernimmt sie direkt.
+(5)+(6) alle betroffenen Stellen rufen jetzt `batch_capacity_size`/`solution_totals` auf. (7) neue
+gemeinsame Funktion `_fill_batch_from_seed` (`batch_construction.py`) - beide Strategien
+unterscheiden sich jetzt nur noch darin, WELCHE Bestellung als nächster Seed gewählt wird. (8) neue
+gemeinsame Funktion `_package_move` (`batch_local_search.py`). (9) `math.ceil(total_size / capacity
+- EPS)`. (10) Vorzeichen über `{-x:+.0f}`-Formatspec statt eines hart codierten `-`-Präfix - zeigt
+korrekt "-23%" (Ersparnis) oder "+7%" (Mehrweg) statt eines garantiert falschen "--7%".
+
+99/99 Tests grün (7 neu: 3 `sync_query_params`, 3 Cooldown-Helfer, 1 Delta-Korrektheit für die
+neuen `_inter_batch_search_dlb`-Rückgabewerte). Live im Browser verifiziert: Standardszenario
+liefert weiterhin exakt 883 m (identisch zu Dutzenden früheren Beobachtungen in dieser Session -
+starke Bestätigung, dass die Auffüll-Schleifen- und Zug-Verpackungs-Refactorings verhaltensgleich
+sind), CP-SAT-Tab-Cooldown reagiert korrekt auf die tatsächliche Solve-Zeit, Politur-Cooldown über
+den geteilten Helfer weiterhin fehlerfrei, Permalink-URL enthält weiterhin alle erwarteten Felder.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).

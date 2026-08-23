@@ -30,6 +30,7 @@ from batch_constants import CPSAT_COOLDOWN_BUFFER, CPSAT_POLISH_TIME_LIMIT_MAX_S
 from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, route_leg_distances
 from batch_ortools_solver import apply_exact_tsp_polish
 from batch_pdf_export import generate_batch_plan_pdf
+from batch_presets import cooldown_record, cooldown_seconds_remaining
 from batch_visualization import build_batch_detail_figure, build_warehouse_overview_figure
 from batch_warehouse import distance_scenario_key
 
@@ -77,32 +78,25 @@ def render_exact_polish_section(prefix, label, batches, final_routes, total_dist
         distance_scenario_key(aisles, positions, aisle_spacing, aisle_length),
     )
 
-    cooldown_state_key = f"{prefix}_polish_last_solve_time"
-    cooldown_duration_key = f"{prefix}_polish_last_elapsed_s"
-    if cooldown_state_key not in st.session_state:
-        st.session_state[cooldown_state_key] = 0.0
-    if cooldown_duration_key not in st.session_state:
-        st.session_state[cooldown_duration_key] = 0.0
-
     polish_clicked = st.button("🎯 Touren exakt nachschärfen", key=f"{prefix}_polish_btn")
     if polish_clicked:
-        # Skaliert wie beim CP-SAT-Tab (app.py) mit der zuletzt TATSÄCHLICH
-        # verbrauchten Rechenzeit, statt eines festen Werts (Code-Review-Fund,
-        # 2026-08-23): ein Politur-Klick kann bis zu CPSAT_POLISH_TOTAL_BUDGET_S
+        # cooldown_seconds_remaining/cooldown_record (batch_presets.py) statt
+        # eigener, hier dupliziert gepflegter Cooldown-Logik (Code-Review-
+        # Fund, 2026-08-23) - derselbe gemeinsame Helfer wie beim CP-SAT-Tab
+        # in app.py, skaliert mit der zuletzt TATSÄCHLICH verbrauchten
+        # Rechenzeit: ein Politur-Klick kann bis zu CPSAT_POLISH_TOTAL_BUDGET_S
         # (20s) dauern - ohne Skalierung ließe sich derselbe ~20s-Job alle 5s
-        # erneut auslösen, genau das Missbrauchsmuster, vor dem der CP-SAT-Tab
-        # seinen Nutzer explizit schützt (siehe dortige Regler-Hilfe).
-        cooldown = st.session_state[cooldown_duration_key] + CPSAT_COOLDOWN_BUFFER
-        since_last = time.time() - st.session_state[cooldown_state_key]
-        if since_last < cooldown:
-            st.warning(f"⏳ Bitte noch {cooldown - since_last:.0f}s warten, bevor Sie erneut nachschärfen.")
+        # erneut auslösen, genau das Missbrauchsmuster, vor dem auch der
+        # CP-SAT-Tab seinen Nutzer schützt.
+        wait = cooldown_seconds_remaining(f"{prefix}_polish", CPSAT_COOLDOWN_BUFFER)
+        if wait > 0:
+            st.warning(f"⏳ Bitte noch {wait:.0f}s warten, bevor Sie erneut nachschärfen.")
         else:
             with st.spinner(f"CP-SAT schärft die Touren nach (bis zu {polish_time_limit}s je Batch)..."):
                 polished_routes, polish_summary = apply_exact_tsp_polish(
                     batches, final_routes, D, polish_time_limit, CPSAT_POLISH_TOTAL_BUDGET_S,
                 )
-            st.session_state[cooldown_state_key] = time.time()
-            st.session_state[cooldown_duration_key] = polish_summary["elapsed_s"]
+            cooldown_record(f"{prefix}_polish", polish_summary["elapsed_s"])
             st.session_state[f"{prefix}_polish_result"] = {
                 "routes": polished_routes, "summary": polish_summary, "key": polish_key,
             }

@@ -11,6 +11,7 @@ import time
 
 import numpy as np
 import pytest
+import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,6 +29,7 @@ from batch_evaluation import (
 )
 from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import (
+    _inter_batch_search_dlb,
     _select_ucb_target,
     _try_moves_from_batch,
     find_two_opt_move,
@@ -41,7 +43,7 @@ from batch_local_search import (
 )
 from batch_ortools_solver import apply_exact_tsp_polish, estimated_model_size, exact_tsp_single_batch, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
-from batch_presets import SETTING_SPECS, apply_preset, bounds, load_permalink_settings
+from batch_presets import SETTING_SPECS, apply_preset, bounds, cooldown_record, cooldown_seconds_remaining, load_permalink_settings, sync_query_params
 from batch_visualization import _batch_style
 from batch_warehouse import aisle_x, build_distance_matrix, depot_distance, item_distance
 
@@ -535,6 +537,28 @@ def test_inter_batch_search_single_batch_finds_no_move():
 
     history = inter_batch_local_search_history(batches, orders, capacity=10, item_sizes=item_sizes, D=D)
     assert len(history) == 1
+
+
+def test_inter_batch_search_dlb_returned_dists_match_fresh_recomputation():
+    # Code-Review-Fund 2026-08-23: _inter_batch_search_dlb_from_state gibt
+    # seit diesem Fix zusaetzlich die je-Batch-Distanzen zurueck, mit denen
+    # iterated_local_search_history seither best_dists direkt uebernimmt statt
+    # sie ueber route_distance neu zu berechnen. Prueft direkt, dass diese
+    # zurueckgegebenen Distanzen exakt zu den zurueckgegebenen Routen passen
+    # (echter Vergleich gegen eine unabhaengige Neuberechnung, nicht nur ein
+    # "laeuft durch"-Test).
+    orders, aisles, positions, _volumes = _sample_orders(n_orders=14, items_min=1, items_max=4, seed=41)
+    item_sizes = _positions_sizes(aisles)
+    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=25.0)
+    capacity = 8
+    construction = greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing=3.0, item_sizes=item_sizes)
+
+    history, final_dists = _inter_batch_search_dlb(construction, orders, capacity, item_sizes, D)
+    _final_batches, final_routes, _final_total = history[-1]
+
+    assert len(final_dists) == len(final_routes)
+    for dist, route in zip(final_dists, final_routes):
+        assert dist == pytest.approx(route_distance(route, D))
 
 
 def test_inter_batch_search_finds_known_relocate_improvement():
@@ -1159,6 +1183,86 @@ def test_bounds_returns_lo_hi_tuple():
 def test_apply_preset_rejects_unknown_keys():
     with pytest.raises(AssertionError):
         apply_preset({"not_a_real_setting": 5})
+
+
+def _seed_session_state_from_specs(overrides=None):
+    """Füllt st.session_state mit den Default-Werten aus SETTING_SPECS
+    (optional überschrieben) - genau der Zustand, den die Sidebar-Widgets
+    zur Laufzeit vor einem sync_query_params-Aufruf hinterlassen."""
+    overrides = overrides or {}
+    for state_key, spec in SETTING_SPECS.items():
+        st.session_state[state_key] = overrides.get(state_key, spec.default)
+
+
+def test_cooldown_seconds_remaining_is_zero_for_a_fresh_prefix():
+    remaining = cooldown_seconds_remaining("test_fresh_prefix_xyz", buffer_s=5.0)
+    assert remaining == 0.0
+
+
+def test_cooldown_scales_with_actual_recorded_duration_not_a_fixed_value():
+    # Code-Review-Fund 2026-08-23: der gemeinsame Cooldown-Helfer ersetzt
+    # sowohl den CP-SAT-Tab (der zuvor die KONFIGURIERTE Zeitlimit-Obergrenze
+    # statt der tatsaechlichen Laufzeit nutzte) als auch die Politur-Sektion.
+    # Zwei verschiedene tatsaechliche Laufzeiten muessen zwei verschiedene
+    # Cooldown-Laengen ergeben - das ist die Kernaussage des Fixes.
+    cooldown_record("test_fast_action", duration_s=1.0)
+    cooldown_record("test_slow_action", duration_s=15.0)
+
+    fast_remaining = cooldown_seconds_remaining("test_fast_action", buffer_s=5.0)
+    slow_remaining = cooldown_seconds_remaining("test_slow_action", buffer_s=5.0)
+
+    assert fast_remaining == pytest.approx(6.0, abs=0.5)
+    assert slow_remaining == pytest.approx(20.0, abs=0.5)
+    assert slow_remaining > fast_remaining
+
+
+def test_cooldown_expires_once_enough_time_has_passed():
+    prefix = "test_expiring_action"
+    cooldown_record(prefix, duration_s=2.0)
+    # Zeitpunkt der Aufzeichnung kuenstlich in die Vergangenheit verschieben,
+    # statt in einem Test tatsaechlich zu schlafen.
+    st.session_state[f"{prefix}_cooldown_last_time"] -= 100.0
+
+    assert cooldown_seconds_remaining(prefix, buffer_s=5.0) == 0.0
+
+
+def test_sync_query_params_writes_every_active_setting_specs_url_param():
+    # Code-Review-Fund 2026-08-23: sync_query_params listete die 14
+    # URL-Parameternamen bislang als Literale von Hand auf (Verdopplung von
+    # SETTING_SPECS.url_param) statt sie wie load_permalink_settings direkt
+    # aus SETTING_SPECS zu lesen. Prüft hier, dass nach der Umstellung
+    # weiterhin JEDER (im Positionen-Modus aktive) url_param geschrieben wird.
+    st.query_params.clear()
+    _seed_session_state_from_specs()
+    sync_query_params(CAPACITY_MODE_POSITIONS)
+
+    for state_key, spec in SETTING_SPECS.items():
+        if state_key == "capacity_volume_slider":
+            continue  # im Positionen-Modus inaktiv, siehe Test unten
+        assert spec.url_param in st.query_params, f"{spec.url_param} (von {state_key}) fehlt in der Permalink-URL"
+        assert st.query_params[spec.url_param] == str(spec.caster(st.session_state[state_key]))
+
+
+def test_sync_query_params_only_writes_the_active_capacity_field():
+    st.query_params.clear()
+    _seed_session_state_from_specs({"capacity_mode_radio": CAPACITY_MODE_VOLUME})
+    sync_query_params(CAPACITY_MODE_VOLUME)
+
+    assert "capacity_vol" in st.query_params
+    assert "capacity" not in st.query_params
+
+
+def test_sync_query_params_seed_roundtrips_even_when_stored_as_float():
+    # Der Grund, warum sync_query_params spec.caster VOR dem Stringifizieren
+    # anwendet statt den Rohwert aus session_state direkt zu formatieren:
+    # ein als float gespeicherter Seed ("11.0") würde sonst beim erneuten
+    # Einlesen über load_permalink_settings mit int("11.0") einen
+    # ValueError auslösen (dort still abgefangen, aber mit Datenverlust).
+    st.query_params.clear()
+    _seed_session_state_from_specs({"seed_input": 11.0})
+    sync_query_params(CAPACITY_MODE_POSITIONS)
+
+    assert st.query_params["seed"] == "11"
 
 
 def test_capacity_mode_spec_has_exactly_two_choices():

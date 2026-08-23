@@ -53,6 +53,7 @@ sich schließlich nicht teilen.
 import numpy as np
 
 from batch_constants import EPS
+from batch_evaluation import batch_capacity_size
 
 
 def _order_stats(orders, aisles, positions, item_sizes):
@@ -64,7 +65,7 @@ def _order_stats(orders, aisles, positions, item_sizes):
     räumlichen Schwerpunkt nicht stärker verschieben als mehrere leichte."""
     cap_sizes, n_items, centroids = {}, {}, {}
     for oid, items in orders.items():
-        cap_sizes[oid] = float(sum(item_sizes[i] for i in items))
+        cap_sizes[oid] = batch_capacity_size(items, item_sizes)
         n_items[oid] = len(items)
         centroids[oid] = (
             float(np.mean([aisles[i] for i in items])),
@@ -92,6 +93,54 @@ def _centroid_distance(c1, c2, aisle_spacing):
 # bestehenden Aufrufstellen nie zu falschem Verhalten führte, aber ein
 # Aufruf-Fallstrick für künftige Änderungen war (ein Skalar landet dann
 # still dort, wo ein Array erwartet wird, oder umgekehrt).
+
+
+def _fill_batch_from_seed(seed, remaining, cap_sizes, n_items, centroids, orders, capacity, aisle_spacing):
+    """Füllt einen neuen Batch ausgehend von `seed` mit der jeweils
+    räumlich nächstgelegenen noch passenden Bestellung auf, bis niemand
+    mehr passt - der gemeinsame Kern von greedy_seed_batching und
+    zone_clustering_batching (Code-Review-Fund, 2026-08-23: vorher fast
+    wortgleich in beiden Funktionen dupliziert, u. a. bereits einmal per
+    Regression-Test abgesichert, siehe README zur "verschenkten Kapazität"-
+    Korrektur - ein künftiger Fix an dieser Auffüll-Logik musste bislang an
+    zwei Stellen von Hand nachgezogen werden). Die beiden Aufrufer
+    unterscheiden sich nur darin, WELCHE Bestellung als nächster Seed
+    gewählt wird (größte Restbestellung bei Greedy-Seed, nächste in
+    Sweep-Reihenfolge bei Zonen-Sweep) - das entscheidet weiterhin
+    ausschließlich der jeweilige Aufrufer.
+
+    `remaining` ist ein `set` und wird IN-PLACE um `seed` sowie jede
+    aufgenommene Bestellung reduziert. Gibt `(batch_orders, batch_items)`
+    zurück."""
+    remaining.discard(seed)
+    batch_orders = [seed]
+    batch_items = list(orders[seed])
+    batch_n_items = n_items[seed]
+    cap_used = cap_sizes[seed]
+    cx, cy = centroids[seed]
+
+    while True:
+        cap_left = capacity - cap_used
+        candidates = [o for o in remaining if cap_sizes[o] <= cap_left + EPS]
+        if not candidates:
+            break
+        best = min(candidates, key=lambda o: _centroid_distance(centroids[o], (cx, cy), aisle_spacing))
+        n_before = batch_n_items
+        batch_orders.append(best)
+        batch_items += orders[best]
+        batch_n_items += n_items[best]
+        cap_used += cap_sizes[best]
+        remaining.discard(best)
+        # Batch-Schwerpunkt aktualisieren (nach Positionsanzahl gewichteter
+        # Mittelwert), damit die nächste Auswahl den tatsächlich bereits
+        # gewachsenen Batch berücksichtigt statt weiter nur den Seed.
+        bx, by = centroids[best]
+        cx = (cx * n_before + bx * n_items[best]) / batch_n_items
+        cy = (cy * n_before + by * n_items[best]) / batch_n_items
+
+    return batch_orders, batch_items
+
+
 def greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing, item_sizes):
     cap_sizes, n_items, centroids = _order_stats(orders, aisles, positions, item_sizes)
     remaining = set(orders.keys())
@@ -99,31 +148,7 @@ def greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing, ite
 
     while remaining:
         seed = max(remaining, key=lambda o: cap_sizes[o])
-        remaining.discard(seed)
-        batch_orders = [seed]
-        batch_items = list(orders[seed])
-        batch_n_items = n_items[seed]
-        cap_left = capacity - cap_sizes[seed]
-        cx, cy = centroids[seed]
-
-        while cap_left > EPS and remaining:
-            candidates = [o for o in remaining if cap_sizes[o] <= cap_left + EPS]
-            if not candidates:
-                break
-            best = min(candidates, key=lambda o: _centroid_distance(centroids[o], (cx, cy), aisle_spacing))
-            n_before = batch_n_items
-            batch_orders.append(best)
-            batch_items += orders[best]
-            batch_n_items += n_items[best]
-            cap_left -= cap_sizes[best]
-            remaining.discard(best)
-            # Batch-Schwerpunkt aktualisieren (nach Positionsanzahl gewichteter
-            # Mittelwert), damit die nächste Auswahl den tatsächlich bereits
-            # gewachsenen Batch berücksichtigt statt weiter nur den Seed.
-            bx, by = centroids[best]
-            cx = (cx * n_before + bx * n_items[best]) / batch_n_items
-            cy = (cy * n_before + by * n_items[best]) / batch_n_items
-
+        batch_orders, batch_items = _fill_batch_from_seed(seed, remaining, cap_sizes, n_items, centroids, orders, capacity, aisle_spacing)
         batches.append({"order_ids": batch_orders, "items": batch_items})
 
     return batches
@@ -131,33 +156,14 @@ def greedy_seed_batching(orders, capacity, aisles, positions, aisle_spacing, ite
 
 def zone_clustering_batching(orders, capacity, aisles, positions, aisle_spacing, item_sizes):
     cap_sizes, n_items, centroids = _order_stats(orders, aisles, positions, item_sizes)
-    remaining = sorted(orders.keys(), key=lambda o: centroids[o])
+    seed_order = sorted(orders.keys(), key=lambda o: centroids[o])
+    remaining = set(seed_order)
     batches = []
 
-    while remaining:
-        seed = remaining.pop(0)
-        batch_orders = [seed]
-        batch_items = list(orders[seed])
-        batch_n_items = n_items[seed]
-        cap_used = cap_sizes[seed]
-        cx, cy = centroids[seed]
-
-        while True:
-            cap_left = capacity - cap_used
-            candidates = [o for o in remaining if cap_sizes[o] <= cap_left + EPS]
-            if not candidates:
-                break
-            best = min(candidates, key=lambda o: _centroid_distance(centroids[o], (cx, cy), aisle_spacing))
-            n_before = batch_n_items
-            batch_orders.append(best)
-            batch_items += orders[best]
-            batch_n_items += n_items[best]
-            cap_used += cap_sizes[best]
-            remaining.remove(best)
-            bx, by = centroids[best]
-            cx = (cx * n_before + bx * n_items[best]) / batch_n_items
-            cy = (cy * n_before + by * n_items[best]) / batch_n_items
-
+    for seed in seed_order:
+        if seed not in remaining:
+            continue  # bereits als Nicht-Seed in einen früheren Batch aufgenommen
+        batch_orders, batch_items = _fill_batch_from_seed(seed, remaining, cap_sizes, n_items, centroids, orders, capacity, aisle_spacing)
         batches.append({"order_ids": batch_orders, "items": batch_items})
 
     return batches

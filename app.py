@@ -55,12 +55,12 @@ import streamlit as st
 
 from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME, CPSAT_COOLDOWN_BUFFER, CPSAT_MAX_MODEL_SIZE, CPSAT_MAX_TIME_LIMIT
 from batch_construction import greedy_seed_batching, singleton_batches, zone_clustering_batching
-from batch_evaluation import batch_capacity_excess, batch_capacity_size, capacity_summary_text, classify_comparison, distance_to_business, route_distance
+from batch_evaluation import batch_capacity_excess, batch_capacity_size, classify_comparison, distance_to_business, solution_totals
 from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
 from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
-from batch_presets import apply_preset, bounds, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
+from batch_presets import apply_preset, bounds, cooldown_record, cooldown_seconds_remaining, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
 from batch_ui_panel import render_batching_panel, render_exact_polish_section
 from batch_visualization import build_warehouse_overview_figure
 from batch_warehouse import build_distance_matrix, distance_scenario_key
@@ -255,7 +255,7 @@ with st.sidebar:
         "praktisch, ohne selbst eine neue Seed-Zahl eintippen zu müssen.",
     )
 
-sync_query_params(n_orders, items_min, items_max, item_volume_min, item_volume_max, n_aisles, aisle_length, aisle_spacing, capacity_mode, capacity, seed, walking_speed, pick_time, cost_per_hour)
+sync_query_params(capacity_mode)
 
 if "force_regen" not in st.session_state:
     st.session_state.force_regen = False
@@ -382,11 +382,22 @@ if best_own["cap_excess"] > 0:
         "jeweiligen Strategie-Tab."
     )
 
+# Vorzeichen über das "+"-Formatspec statt eines hart codierten "-"-Präfix
+# (Code-Review-Fund, 2026-08-23): dist_saved_pct/hours_saved/cost_saved
+# vergleichen zwei UNABHÄNGIG berechnete Ergebnisse (Batching-Heuristik vs.
+# Einzelkommissionierung) ohne formale Garantie, dass Batching immer
+# gewinnt - ein hart codiertes "-" hätte bei einem (per Stress-Test über
+# 598 Szenarien nie beobachteten, aber nicht ausgeschlossenen) negativen
+# Wert ein doppeltes Minuszeichen wie "--7%" erzeugt. `{-x:+.0f}` zeigt
+# stattdessen korrekt "-23%" (Ersparnis) oder "+7%" (Mehrweg), abhängig
+# vom tatsächlichen Vorzeichen - "Anzahl Touren" braucht das nicht: ein
+# Batch enthält immer ≥1 Bestellung, die Batch-Anzahl kann die
+# Bestellanzahl also nie übersteigen.
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Laufdistanz", f"{best_own['total_distance']:.0f} m", delta=f"-{dist_saved_pct:.0f}% ggü. Einzelkommissionierung", delta_color="inverse")
+m1.metric("Laufdistanz", f"{best_own['total_distance']:.0f} m", delta=f"{-dist_saved_pct:+.0f}% ggü. Einzelkommissionierung", delta_color="inverse")
 m2.metric("Anzahl Touren", f"{len(best_own['batches'])}", delta=f"-{n_orders_eff - len(best_own['batches'])} ggü. Einzelkommissionierung", delta_color="inverse")
-m3.metric("Kommissionierzeit", f"{best_hours:.1f} h", delta=f"-{hours_saved:.1f} h ggü. Einzelkommissionierung", delta_color="inverse")
-m4.metric("Personalkosten", f"{best_cost:.0f} €", delta=f"-{cost_saved:.0f} € ggü. Einzelkommissionierung", delta_color="inverse")
+m3.metric("Kommissionierzeit", f"{best_hours:.1f} h", delta=f"{-hours_saved:+.1f} h ggü. Einzelkommissionierung", delta_color="inverse")
+m4.metric("Personalkosten", f"{best_cost:.0f} €", delta=f"{-cost_saved:+.0f} € ggü. Einzelkommissionierung", delta_color="inverse")
 
 if cost_saved > 0.5:
     st.success(
@@ -482,17 +493,11 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
             # werden muss.
             current_key_cpsat = cache_key + (num_batches_cpsat, time_limit_cpsat)
 
-            if "cpsat_last_solve_time" not in st.session_state:
-                st.session_state.cpsat_last_solve_time = 0.0
-            if "cpsat_last_time_limit" not in st.session_state:
-                st.session_state.cpsat_last_time_limit = 0
-
             solve_clicked_cpsat = st.button("🧮 Mit CP-SAT lösen", key="cpsat_solve_btn")
             if solve_clicked_cpsat:
-                cooldown = st.session_state.cpsat_last_time_limit + CPSAT_COOLDOWN_BUFFER
-                since_last = time.time() - st.session_state.cpsat_last_solve_time
-                if since_last < cooldown:
-                    st.warning(f"⏳ Bitte noch {cooldown - since_last:.0f}s warten, bevor Sie erneut lösen.")
+                wait = cooldown_seconds_remaining("cpsat", CPSAT_COOLDOWN_BUFFER)
+                if wait > 0:
+                    st.warning(f"⏳ Bitte noch {wait:.0f}s warten, bevor Sie erneut lösen.")
                 else:
                     with st.spinner(f"CP-SAT sucht bis zu {time_limit_cpsat}s nach einer Lösung..."):
                         t_start = time.time()
@@ -500,8 +505,7 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
                             orders, capacity, item_sizes, D, num_batches_cpsat, time_limit_cpsat,
                         )
                         elapsed = time.time() - t_start
-                    st.session_state.cpsat_last_solve_time = time.time()
-                    st.session_state.cpsat_last_time_limit = time_limit_cpsat
+                    cooldown_record("cpsat", elapsed)
                     st.session_state["cpsat_result"] = {
                         "batches": cpsat_batches, "status": cpsat_status, "key": current_key_cpsat, "elapsed": elapsed,
                     }
@@ -522,7 +526,7 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
             else:
                 cpsat_batches = result_cpsat["batches"]
                 cpsat_routes = [b["route"] for b in cpsat_batches]
-                cpsat_total = sum(route_distance(r, D) for r in cpsat_routes)
+                cpsat_total = solution_totals(cpsat_routes, D)
                 cpsat_hours, cpsat_cost, _ = distance_to_business(cpsat_total, n_items_total, len(cpsat_batches), walking_speed, pick_time, cost_per_hour)
 
                 if result_cpsat["status"] == "OPTIMAL":

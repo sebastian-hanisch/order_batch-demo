@@ -42,7 +42,7 @@ import math
 import time
 
 from batch_constants import EPS
-from batch_evaluation import route_distance
+from batch_evaluation import batch_capacity_size, route_distance, solution_totals
 
 CPSAT_SCALE = 100
 
@@ -69,9 +69,14 @@ def recommended_num_batches(orders, capacity, item_sizes, slack=1):
     über viele Batches zu einem zweistelligen Fehlbetrag aufsummieren
     kann (verifiziert: total_size=533.8, capacity=5.5 lieferte vorher 90
     statt der tatsächlich nötigen 98 Batch-Slots). Stattdessen exakt auf
-    den echten Fließkommawerten aufrunden."""
-    total_size = sum(sum(item_sizes[i] for i in items) for items in orders.values())
-    minimum = max(1, math.ceil(total_size / capacity)) if capacity > 0 else len(orders)
+    den echten Fließkommawerten aufrunden - mit einer kleinen EPS-Toleranz
+    VOR dem Aufrunden (zweiter, kleinerer Code-Review-Fund), damit
+    Summierungs-Rundungsrauschen (z. B. eine Gesamtgröße, die eigentlich
+    exakt einem Vielfachen der Kapazität entspricht, aber durch viele
+    Float-Additionen minimal darüber landet) nicht fälschlich einen
+    zusätzlichen Batch-Slot erzwingt."""
+    total_size = sum(batch_capacity_size(items, item_sizes) for items in orders.values())
+    minimum = max(1, math.ceil(total_size / capacity - EPS)) if capacity > 0 else len(orders)
     return min(len(orders), minimum + slack)
 
 
@@ -103,7 +108,7 @@ def solve_with_cpsat(orders, capacity, item_sizes, D, num_batches, time_limit_s)
             y[oid, k] = model.NewBoolVar(f"y_{oid}_{k}")
         model.AddExactlyOne(y[oid, k] for k in range(num_batches))
 
-    order_size = {oid: int(round(sum(item_sizes[i] for i in orders[oid]) * CPSAT_SCALE)) for oid in order_ids}
+    order_size = {oid: int(round(batch_capacity_size(orders[oid], item_sizes) * CPSAT_SCALE)) for oid in order_ids}
     cap_scaled = int(round(capacity * CPSAT_SCALE))
     for k in range(num_batches):
         model.Add(sum(y[oid, k] * order_size[oid] for oid in order_ids) <= cap_scaled)
@@ -295,6 +300,6 @@ def apply_exact_tsp_polish(batches, routes, D, per_batch_time_limit_s, total_tim
         "n_skipped_budget": n_skipped_budget,
         "n_not_proven_optimal": n_not_proven_optimal,
         "elapsed_s": time.time() - t_start,
-        "total_distance": sum(route_distance(r, D) for r in new_routes),
+        "total_distance": solution_totals(new_routes, D),
     }
     return new_routes, summary

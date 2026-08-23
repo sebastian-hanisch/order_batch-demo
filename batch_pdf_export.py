@@ -7,7 +7,7 @@ den anderen Demos (siehe z. B. vrp_pdf_export.py).
 import time
 
 from batch_constants import CAPACITY_MODE_POSITIONS, DEFAULT_COST_PER_HOUR, DEFAULT_PICK_TIME_S, DEFAULT_WALKING_SPEED_MPS
-from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, route_distance
+from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, solution_totals
 
 
 def generate_batch_plan_pdf(label, batches, final_routes, order_ids_by_item, aisles, positions, D, capacity, capacity_mode, item_sizes, walking_speed_mps=DEFAULT_WALKING_SPEED_MPS, pick_time_s=DEFAULT_PICK_TIME_S, cost_per_hour=DEFAULT_COST_PER_HOUR):
@@ -19,7 +19,7 @@ def generate_batch_plan_pdf(label, batches, final_routes, order_ids_by_item, ais
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
 
-    total_dist = sum(route_distance(r, D) for r in final_routes)
+    total_dist = solution_totals(final_routes, D)
     n_items_total = sum(len(r) for r in final_routes)
     total_hours, total_cost, throughput = distance_to_business(total_dist, n_items_total, len(batches), walking_speed_mps, pick_time_s, cost_per_hour)
     show_volume = capacity_mode != CAPACITY_MODE_POSITIONS

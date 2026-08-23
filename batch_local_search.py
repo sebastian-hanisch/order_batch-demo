@@ -87,7 +87,7 @@ from batch_constants import (
     LOCAL_SEARCH_MAX_MOVES,
     UCB_EXPLORATION_C,
 )
-from batch_evaluation import route_distance
+from batch_evaluation import batch_capacity_size, route_distance
 
 
 def nearest_neighbor_route(item_indices, D):
@@ -197,6 +197,21 @@ def _cheapest_insertion(route, items_to_insert, D):
     return current
 
 
+def _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, new_dist_i, new_dist_j):
+    """Verpackt einen akzeptierten Relocate-/Swap-Zug zwischen Batch i und j
+    in die von `_try_moves_from_batch` erwartete Rückgabeform - der
+    gemeinsame Abschluss aller drei Zug-Arten dort (Code-Review-Fund,
+    2026-08-23: vorher dreimal wortgleich dupliziert). Nur dieser letzte
+    "Ergebnis zusammenbauen"-Schritt ist bei allen drei Zug-Arten
+    identisch; wie `new_batches` selbst aussieht, unterscheidet sich je
+    Zug-Art und bleibt bewusst Sache der Aufrufer."""
+    new_routes = list(routes)
+    new_routes[i], new_routes[j] = new_route_i, new_route_j
+    new_dists = list(dists)
+    new_dists[i], new_dists[j] = new_dist_i, new_dist_j
+    return new_batches, new_routes, new_dists, True, {i, j}
+
+
 def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_sizes, D):
     """Sucht EINEN verbessernden Zug (Relocate oder Swap), an dem Batch i
     beteiligt ist - als Quelle, als Ziel oder als Tauschpartner. Kern der
@@ -212,12 +227,12 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
     # aufzusummieren, obwohl sie nur von j abhängt - dieselbe Größe wurde in
     # der ersten Zug-Art bislang bis zu len(order_ids)-mal unnötig neu
     # berechnet, in der zweiten Zug-Art sogar bei jedem einzelnen Kandidaten.
-    batch_sizes = [sum(item_sizes[k] for k in b["items"]) for b in batches]
+    batch_sizes = [batch_capacity_size(b["items"], item_sizes) for b in batches]
 
     if len(batches[i]["order_ids"]) > 1:
         for oid in batches[i]["order_ids"]:
             order_items = orders[oid]
-            order_size = sum(item_sizes[k] for k in order_items)
+            order_size = batch_capacity_size(order_items, item_sizes)
             for j in range(n):
                 if j == i:
                     continue
@@ -235,18 +250,14 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
                         "items": [k for k in batches[i]["items"] if k not in order_items],
                     }
                     new_batches[j] = {"order_ids": batches[j]["order_ids"] + [oid], "items": batches[j]["items"] + order_items}
-                    new_routes = list(routes)
-                    new_routes[i], new_routes[j] = new_route_i, new_route_j
-                    new_dists = list(dists)
-                    new_dists[i], new_dists[j] = new_dist_i, new_dist_j
-                    return new_batches, new_routes, new_dists, True, {i, j}
+                    return _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, new_dist_i, new_dist_j)
 
     for j in range(n):
         if j == i or len(batches[j]["order_ids"]) <= 1:
             continue
         for oid in batches[j]["order_ids"]:
             order_items = orders[oid]
-            order_size = sum(item_sizes[k] for k in order_items)
+            order_size = batch_capacity_size(order_items, item_sizes)
             target_size = batch_sizes[i]
             if target_size + order_size > capacity + EPS:
                 continue
@@ -261,11 +272,7 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
                     "items": [k for k in batches[j]["items"] if k not in order_items],
                 }
                 new_batches[i] = {"order_ids": batches[i]["order_ids"] + [oid], "items": batches[i]["items"] + order_items}
-                new_routes = list(routes)
-                new_routes[i], new_routes[j] = new_route_i, new_route_j
-                new_dists = list(dists)
-                new_dists[i], new_dists[j] = new_dist_i, new_dist_j
-                return new_batches, new_routes, new_dists, True, {i, j}
+                return _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, new_dist_i, new_dist_j)
 
     size_i = batch_sizes[i]
     for j in range(n):
@@ -273,9 +280,9 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
             continue
         size_j = batch_sizes[j]
         for oid_i in batches[i]["order_ids"]:
-            size_oid_i = sum(item_sizes[k] for k in orders[oid_i])
+            size_oid_i = batch_capacity_size(orders[oid_i], item_sizes)
             for oid_j in batches[j]["order_ids"]:
-                size_oid_j = sum(item_sizes[k] for k in orders[oid_j])
+                size_oid_j = batch_capacity_size(orders[oid_j], item_sizes)
                 if size_i - size_oid_i + size_oid_j > capacity + EPS:
                     continue
                 if size_j - size_oid_j + size_oid_i > capacity + EPS:
@@ -294,11 +301,7 @@ def _try_moves_from_batch(i, batches, routes, dists, orders, capacity, item_size
                         "order_ids": [o for o in batches[j]["order_ids"] if o != oid_j] + [oid_i],
                         "items": [k for k in batches[j]["items"] if k not in orders[oid_j]] + orders[oid_i],
                     }
-                    new_routes = list(routes)
-                    new_routes[i], new_routes[j] = new_route_i, new_route_j
-                    new_dists = list(dists)
-                    new_dists[i], new_dists[j] = new_dist_i, new_dist_j
-                    return new_batches, new_routes, new_dists, True, {i, j}
+                    return _package_move(routes, dists, i, j, new_batches, new_route_i, new_route_j, new_dist_i, new_dist_j)
 
     return batches, routes, dists, False, set()
 
@@ -355,7 +358,17 @@ def _inter_batch_search_dlb_from_state(batches, routes, dists, orders, capacity,
     müssen nur die tatsächlich betroffenen Batches neu geprüft werden, nicht
     die komplette Lösung. `_inter_batch_search_dlb` (Kaltstart: alle Batches
     aktiv, Routen frisch aus den Items aufgebaut) ist der Sonderfall
-    active_init=alle Batches."""
+    active_init=alle Batches.
+
+    Gibt zusätzlich zur Historie die je-Batch-Distanzen am Ende zurück
+    (`(history, current_dists)` statt nur `history`, Code-Review-Fund
+    2026-08-23): die Suche kennt `current_dists` ohnehin schon während des
+    gesamten Laufs (nur `sum(current_dists)` landet in der Historie, für
+    die UI reicht das) - `iterated_local_search_history` brauchte bislang
+    die JE-BATCH-Aufschlüsselung fürs Warm-Start-Perturbieren des nächsten
+    Neustarts und baute sie dafür nach jedem verbessernden Neustart per
+    `route_distance` über ALLE Batches komplett neu auf, statt einfach das
+    hier bereits vorhandene Ergebnis zu übernehmen."""
     current_batches = [dict(b) for b in batches]
     current_routes = list(routes)
     current_dists = list(dists)
@@ -381,7 +394,7 @@ def _inter_batch_search_dlb_from_state(batches, routes, dists, orders, capacity,
                 active.append(b)
                 in_active.add(b)
 
-    return history
+    return history, current_dists
 
 
 def _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves=LOCAL_SEARCH_MAX_MOVES):
@@ -474,7 +487,7 @@ def inter_batch_local_search_history(batches, orders, capacity, item_sizes, D, m
     Eintrag wird zusätzlich per _apply_final_safety_net abgesichert (siehe
     dort). Für die stärkere, um Iterated Local Search erweiterte Variante
     siehe iterated_local_search_history."""
-    history = _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves)
+    history, _final_dists = _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves)
     final_batches, final_routes, _final_total = history[-1]
     safe_routes, safe_total = _apply_final_safety_net(final_batches, final_routes, D)
     history[-1] = (final_batches, safe_routes, safe_total)
@@ -546,10 +559,10 @@ def perturb_batches(batches, orders, capacity, item_sizes, rng, ucb_tries, ucb_s
             continue
         oid = rng.choice(batches[i]["order_ids"])
         order_items = orders[oid]
-        order_size = sum(item_sizes[k] for k in order_items)
+        order_size = batch_capacity_size(order_items, item_sizes)
         candidates_j = [
             j for j in range(len(batches))
-            if j != i and sum(item_sizes[k] for k in batches[j]["items"]) + order_size <= capacity + EPS
+            if j != i and batch_capacity_size(batches[j]["items"], item_sizes) + order_size <= capacity + EPS
         ]
         if not candidates_j:
             continue
@@ -603,9 +616,8 @@ def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_
     unabhängig davon, ob er selbst verbessert hat (auch Fehlschläge zählen
     als "Versuch", nur nicht als "Erfolg")."""
     rng = random.Random(seed)
-    history = _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves)
+    history, best_dists = _inter_batch_search_dlb(batches, orders, capacity, item_sizes, D, max_moves)
     best_batches, best_routes, best_dist = history[-1]
-    best_dists = [route_distance(r, D) for r in best_routes]
 
     ucb_tries, ucb_successes, ucb_total = {}, {}, 0
     t_start = time.time()
@@ -627,7 +639,11 @@ def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_
                 cand_dists.append(best_dists[idx])
 
         active_init = touched if touched else range(len(perturbed))
-        cand_history = _inter_batch_search_dlb_from_state(
+        # cand_dists_final: die je-Batch-Distanzen, mit denen die Suche
+        # tatsächlich endete - bei Verbesserung direkt als neues best_dists
+        # übernommen statt (Code-Review-Fund, 2026-08-23) hinterher per
+        # route_distance über ALLE Batches neu berechnet.
+        cand_history, cand_dists_final = _inter_batch_search_dlb_from_state(
             perturbed, cand_routes, cand_dists, orders, capacity, item_sizes, D, active_init, max_moves
         )
         cand_batches, cand_routes, cand_dist = cand_history[-1]
@@ -639,7 +655,7 @@ def iterated_local_search_history(batches, orders, capacity, item_sizes, D, max_
         ucb_total += 1
         if improved:
             best_batches, best_routes, best_dist = cand_batches, cand_routes, cand_dist
-            best_dists = [route_distance(r, D) for r in best_routes]
+            best_dists = cand_dists_final
             history.append((best_batches, best_routes, best_dist))
 
     safe_routes, safe_total = _apply_final_safety_net(best_batches, best_routes, D)
