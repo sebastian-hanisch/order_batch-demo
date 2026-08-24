@@ -1,11 +1,12 @@
 # Order Batching (Kommissionier-Batchbildung)
 
-Siebte Demo im Portfolio, nach Tourenplanung (VRP), 3D-Packungsoptimierung, Liniennetz-Design
-(ÖPNV), Tor-Zuordnung (Cross-Dock), LKW-Zeitfenster-Buchung und Wechselbrücken-Hofmanagement.
-Zurück im Kernfeld Intralogistik: Kundenbestellungen werden zu Kommissionier-Batches gruppiert,
-die ein Kommissionierer in **einer** Tour durchs Lager abarbeitet, begrenzt durch eine Kapazität
-(max. Positionen je Batch, z. B. die Fächer eines Kommissionierwagens) - das klassische **Order
-Batching Problem** aus der Warehousing-Literatur (z. B. Gademann & van de Velde 2005).
+Siebte Demo im Portfolio, nach Tourenplanung (VRP), 3D-Packungsoptimierung, Seefracht-
+Konsolidierung (LCL), Liniennetz-Design (ÖPNV), Tor-Zuordnung (Cross-Dock) und LKW-Zeitfenster-
+Buchung. Zurück im Kernfeld Intralogistik: Kundenbestellungen werden zu Kommissionier-Batches
+gruppiert, die ein Kommissionierer in **einer** Tour durchs Lager abarbeitet, begrenzt durch eine
+Kapazität (max. Positionen je Batch, z. B. die Fächer eines Kommissionierwagens) - das klassische
+**Order Batching Problem** aus der Warehousing-Literatur (grundlegend bereits Elsayed 1981; das
+hier verwendete parallele-Gang-Modell folgt Gademann & van de Velde 2005).
 
 Selbe Methodik wie bei den anderen Demos: Konstruktionsheuristik(en) + Bewertung + Vergleich,
 Ergebnis zuerst ("Ihr optimierter Batchplan"), Methodenvergleich sekundär im Expander.
@@ -38,7 +39,7 @@ Ergebnis zuerst ("Ihr optimierter Batchplan"), Methodenvergleich sekundär im Ex
 | `batch_pdf_export.py` | PDF-Batchplan-Export |
 | `batch_feedback.py` | Feedback-Logging (CSV) |
 | `batch_ortools_solver.py` | Exakter/nahe-exakter CP-SAT-Vergleichslöser (Zuteilung + Routing gemeinsam) |
-| `tests/test_app.py` | Testsuite (70 Tests) |
+| `tests/test_app.py` | Testsuite (99 Tests) |
 
 ## Funktionsumfang
 
@@ -1286,18 +1287,21 @@ Portfolio-Bereich verlinken - identisches Vorgehen wie bei den anderen Demos.
 
 ## 5. Anpassungsideen für später
 
-- Relocate/Swap und 2-opt zu einer gemeinsamen, verschachtelten lokalen Suche verzahnen statt sie
-  nacheinander laufen zu lassen (siehe "Bewusst nicht enthalten" oben).
 - Mehrfach-Umschichtungen (3+ Bestellungen zwischen mehreren Batches gleichzeitig) als weitere
-  Nachbarschaft der Inter-Batch-Suche.
+  Nachbarschaft der Inter-Batch-Suche (siehe "Bewusst nicht enthalten" oben).
 - Kombinierte Kapazität (Positionen UND Volumen gleichzeitig als harte Grenzen, statt nur einer
   umschaltbaren Kapazitätsart) sowie eine dritte Kapazitätsart nach Gewicht.
 - Mehrere Kommissionierer gleichzeitig mit Wegekonflikten (verwandt mit dem Multi-Vehicle-Fall
   der Tourenplanung-Demo, nur mit fester statt freier Tourzuteilung).
 - Kommissionierwellen mit Zeitfenstern (Bestellung muss bis Uhrzeit X versandfertig sein).
-- Eine vollständige Metaheuristik (Simulated Annealing, Tabu Search) statt Iterated Local Search -
-  würde vermutlich noch etwas mehr Qualität herausholen, aber mit spürbar mehr Komplexität
-  (Abkühlplan bzw. Tabu-Liste pflegen) für einen nach den bisherigen Benchmark-Zahlen wahrscheinlich
-  kleinen Zusatzgewinn.
 - CP-SAT mit einem "warm start" aus der eigenen Heuristik füttern (`AddHint`) - könnte die Suche
   bei mittelgroßen Instanzen beschleunigen, ohne die Modellgröße selbst zu verändern.
+
+**Zwei Punkte dieser Liste sind inzwischen nicht mehr offen** (ursprünglich hier als Ideen gelistet,
+dann tatsächlich benchmarkt): Relocate/Swap und 2-opt zu einer verschachtelten Suche zu verzahnen
+ist **umgesetzt** (siehe "Benchmark: Zuteilung und Routing verschachtelt..." oben). Eine
+vollständige Metaheuristik (Simulated Annealing, Tabu Search) statt Iterated Local Search wurde
+dagegen explizit getestet und **verworfen** - schnitt durchweg schlechter ab als die aktuelle
+ILS+Don't-Look-Bits-Kombination, Tabu Search sogar deutlicher und selbst bei einem
+verzehnfachten Zeitbudget noch schlechter (siehe "Benchmark: vierzehn Metaheuristik-Varianten
+geprüft" oben für alle 14 getesteten Varianten inkl. ALNS).
