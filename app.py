@@ -30,12 +30,6 @@ Features:
   Nutzeranfrage benchmarkt und ergänzt, siehe README).
 - Geschäftliche Kennzahlen: Kommissionierzeit, Personalkosten, Durchsatz
   statt abstrakter Distanzwerte.
-- Optionaler Vergleich mit Googles CP-SAT (Open Source, exakter Constraint-
-  Solver) auf kleinen Instanzen - button-gesteuert wegen Rechenzeit.
-- Optionale Politur: löst zusätzlich die Route jedes einzelnen, bereits
-  zugeteilten Batches exakt mit CP-SAT (statt nur 2-opt) und behält die
-  kürzere Route - button-gesteuert, verfügbar beim Hauptergebnis und je
-  Strategie-Tab.
 - Drei Ein-Klick-Beispielszenarien, Permalink (URL spiegelt die aktuelle
   Konfiguration), PDF-Batchplan-Export, Feedback-Mechanismus.
 
@@ -47,20 +41,17 @@ Datei. app.py enthält nur den Streamlit-Ablauf (Sidebar, Tabs, Vergleich) -
 dasselbe Strukturprinzip wie in den anderen Demos des Portfolios.
 """
 
-import time
-
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME, CPSAT_COOLDOWN_BUFFER, CPSAT_MAX_MODEL_SIZE, CPSAT_MAX_TIME_LIMIT
+from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME
 from batch_construction import greedy_seed_batching, singleton_batches, zone_clustering_batching
-from batch_evaluation import batch_capacity_excess, batch_capacity_size, classify_comparison, distance_to_business, solution_totals
+from batch_evaluation import batch_capacity_excess, batch_capacity_size, classify_comparison, distance_to_business
 from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
-from batch_ortools_solver import estimated_model_size, recommended_num_batches, solve_with_cpsat
-from batch_presets import apply_preset, bounds, cooldown_record, cooldown_seconds_remaining, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
-from batch_ui_panel import generate_batch_plan_pdf_cached, pdf_cache_key, render_batching_panel, render_exact_polish_section
+from batch_presets import apply_preset, bounds, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
+from batch_ui_panel import generate_batch_plan_pdf_cached, pdf_cache_key, render_batching_panel
 from batch_visualization import build_warehouse_overview_figure
 from batch_warehouse import build_distance_matrix, distance_scenario_key
 
@@ -137,8 +128,8 @@ implementierte Strategien - **Greedy-Seed-Batching** (klassisches Seed-Verfahren
 Batching-Literatur) und **Zonen-Sweep-Batching** (gruppiert nach Lagerbereich) - werden direkt
 verglichen und durch eine **verschachtelte Lokalsuche** weiter verbessert: sowohl die
 Batch-Zuteilung selbst (Bestellungen zwischen Batches verschieben/tauschen) als auch die Route je
-Batch (2-opt), ergänzt um **Iterated Local Search** für gezielte Neustarts und optional eine exakte
-**CP-SAT**-Politur. Zielgröße ist die gesamte Laufdistanz: weniger Weg bedeutet weniger
+Batch (2-opt), ergänzt um **Iterated Local Search** für gezielte Neustarts. Zielgröße ist die
+gesamte Laufdistanz: weniger Weg bedeutet weniger
 Kommissionierzeit und mehr Durchsatz, ohne dass sich an der Zahl der zu pickenden Positionen etwas
 ändert - Hintergrund dazu im Expander "Wie funktioniert diese Demo?" unten.
 """
@@ -429,16 +420,10 @@ st.caption(
     "zu beiden Strategien und dem direkten Vergleich unten."
 )
 
-render_exact_polish_section(
-    "best", best_own["label"], best_own["batches"], best_own["final_routes"], best_own["total_distance"],
-    order_id_col, aisles, positions, aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes,
-    walking_speed, pick_time, cost_per_hour,
-)
-
 st.markdown("---")
 
 with st.expander("🔧 Wie wir das erreichen – vollständiger Strategievergleich", expanded=False):
-    tab_labels = [m[2] for m in METHODS] + ["🧮 Exakter Solver (CP-SAT)", "📊 Vergleich"]
+    tab_labels = [m[2] for m in METHODS] + ["📊 Vergleich"]
     tabs = st.tabs(tab_labels)
 
     summaries = {}
@@ -451,131 +436,11 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
                 aisle_spacing, D, capacity, capacity_mode, item_sizes, walking_speed, pick_time, cost_per_hour,
             )
 
-    tab_cpsat = tabs[len(METHODS)]
-    tab_compare = tabs[len(METHODS) + 1]
-
-    cpsat_summary = None
-    with tab_cpsat:
-        st.caption(
-            "Löst dasselbe Problem (gleiche Distanzen, gleiche Kapazität) mit Googles CP-SAT "
-            "(Open Source, Apache 2.0, Teil von OR-Tools) statt mit unseren eigenen Heuristiken - "
-            "Zuordnung UND Route werden dabei in einem einzigen Modell gemeinsam exakt gelöst, "
-            "nicht nacheinander wie bei Greedy-Seed/Zonen-Sweep + Inter-Batch-Suche. Wegen der "
-            "Rechenzeit nur für kleine Instanzen sinnvoll (siehe README) - button-gesteuert."
-        )
-        num_batches_cpsat = recommended_num_batches(orders, capacity, item_sizes)
-        model_size = estimated_model_size(n_items_total, num_batches_cpsat)
-
-        if model_size > CPSAT_MAX_MODEL_SIZE:
-            st.warning(
-                f"⚠️ Diese Instanz ist zu groß für den exakten Solver ({n_items_total} Positionen, "
-                f"voraussichtlich {num_batches_cpsat} Batches) - schon der reine Modellaufbau würde "
-                "mehrere Sekunden bis Minuten dauern, unabhängig vom Zeitlimit unten. Reduzieren Sie "
-                "z. B. die Anzahl Bestellungen oder Positionen je Bestellung in der Seitenleiste, um "
-                "diesen Vergleich nutzen zu können."
-            )
-        else:
-            time_limit_cpsat = st.slider(
-                "Zeitlimit für den Solver (Sekunden)", 1, CPSAT_MAX_TIME_LIMIT, min(10, CPSAT_MAX_TIME_LIMIT), key="cpsat_time_limit",
-                help=f"Auf {CPSAT_MAX_TIME_LIMIT}s gedeckelt, um die App bei mehreren gleichzeitigen "
-                "Besuchern auf dem kostenlosen Hosting-Tarif nicht zu überlasten. Wird die Zeit "
-                "ausgeschöpft, ohne dass Optimalität bewiesen werden konnte, zeigt das Ergebnis "
-                "'Beste gefundene Lösung' statt 'Nachweislich optimal' an.",
-            )
-            # Baut auf `cache_key` auf (enthält bereits alles, wovon D UND das
-            # Batching selbst abhängen: aisles/positions/order_id_col/item_sizes/
-            # capacity_mode/capacity/aisle_spacing/aisle_length), statt dieselben
-            # Felder hier ein zweites Mal von Hand aufzulisten - genau diese
-            # Verdopplung war der Grund für einen Code-Review-Fund (2026-08-23):
-            # die handgepflegte Kopie hatte bereits capacity_mode "verloren" und
-            # zunächst auch aisle_spacing/aisle_length (nur durch Zufall bislang
-            # nicht aufgefallen, da item_sizes sich bei einem Moduswechsel
-            # ohnehin mit ändert). Ein gecachtes CP-SAT-Ergebnis blieb dadurch
-            # nach Eingabeänderungen fälschlich "gültig" - cpsat_total wird
-            # unten JEDEN Rerun frisch aus dem AKTUELLEN D berechnet, während
-            # cpsat_routes (die Besuchsreihenfolge) aus der alten Lösung stammt.
-            # Nur noch die zwei CP-SAT-spezifischen Werte ergänzen, die
-            # cache_key nicht kennt - ein künftiges neues Feld in cache_key
-            # (z. B. ein weiterer Distanz-Einflussfaktor) landet dadurch
-            # automatisch auch hier, ohne dass diese Stelle separat gepflegt
-            # werden muss.
-            current_key_cpsat = cache_key + (num_batches_cpsat, time_limit_cpsat)
-
-            solve_clicked_cpsat = st.button("🧮 Mit CP-SAT lösen", key="cpsat_solve_btn")
-            if solve_clicked_cpsat:
-                wait = cooldown_seconds_remaining("cpsat", CPSAT_COOLDOWN_BUFFER)
-                if wait > 0:
-                    st.warning(f"⏳ Bitte noch {wait:.0f}s warten, bevor Sie erneut lösen.")
-                else:
-                    with st.spinner(f"CP-SAT sucht bis zu {time_limit_cpsat}s nach einer Lösung..."):
-                        t_start = time.time()
-                        cpsat_batches, cpsat_status, wall_time = solve_with_cpsat(
-                            orders, capacity, item_sizes, D, num_batches_cpsat, time_limit_cpsat,
-                        )
-                        elapsed = time.time() - t_start
-                    cooldown_record("cpsat", elapsed)
-                    st.session_state["cpsat_result"] = {
-                        "batches": cpsat_batches, "status": cpsat_status, "key": current_key_cpsat, "elapsed": elapsed,
-                    }
-
-            result_cpsat = st.session_state.get("cpsat_result")
-            if result_cpsat is None:
-                st.info("Noch keine Lösung berechnet – auf den Button oben klicken.")
-            elif result_cpsat["batches"] is None:
-                st.error(
-                    f"⚠️ CP-SAT hat innerhalb des Zeitlimits keine zulässige Lösung gefunden "
-                    f"(Status: {result_cpsat['status']}). Zeitlimit erhöhen oder Instanz verkleinern."
-                )
-            elif result_cpsat["key"] != current_key_cpsat:
-                st.warning(
-                    "⚠️ Die Eingaben haben sich seit dieser Lösung geändert – das alte Ergebnis passt "
-                    "nicht mehr zu den aktuellen Bestellungen und wird ausgeblendet. Bitte erneut lösen."
-                )
-            else:
-                cpsat_batches = result_cpsat["batches"]
-                cpsat_routes = [b["route"] for b in cpsat_batches]
-                cpsat_total = solution_totals(cpsat_routes, D)
-                cpsat_hours, cpsat_cost, _ = distance_to_business(cpsat_total, n_items_total, len(cpsat_batches), walking_speed, pick_time, cost_per_hour)
-
-                if result_cpsat["status"] == "OPTIMAL":
-                    st.success("✅ Nachweislich optimal - keine Aufteilung kann besser sein als diese.")
-                else:
-                    st.warning(
-                        "⚠️ Beste innerhalb des Zeitlimits gefundene Lösung - Optimalität konnte "
-                        "nicht bewiesen werden (mit mehr Zeit evtl. noch verbesserbar)."
-                    )
-
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Laufdistanz", f"{cpsat_total:.0f} m")
-                m2.metric("Anzahl Batches", len(cpsat_batches))
-                m3.metric("Kommissionierzeit", f"{cpsat_hours:.1f} h")
-                m4.metric("Rechenzeit", f"{result_cpsat['elapsed']:.1f} s")
-
-                fig_cpsat = build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spacing, cpsat_batches, cpsat_routes)
-                st.plotly_chart(fig_cpsat, width="stretch", key="cpsat_plot")
-
-                pdf_bytes_cpsat = generate_batch_plan_pdf_cached(
-                    "CP-SAT", cpsat_batches, cpsat_routes, order_id_col, aisles, positions, D, capacity,
-                    capacity_mode, item_sizes, walking_speed, pick_time, cost_per_hour,
-                    pdf_cache_key(order_id_col, aisles, positions, aisle_spacing, aisle_length, item_sizes),
-                )
-                st.download_button(
-                    "📄 Batchplan als PDF herunterladen", data=pdf_bytes_cpsat,
-                    file_name="batchplan_cpsat.pdf", mime="application/pdf", key="cpsat_pdf_download",
-                )
-
-                cpsat_summary = {
-                    "key": "cpsat", "label": f"CP-SAT ({result_cpsat['status']})", "total_distance": cpsat_total,
-                    "n_batches": len(cpsat_batches), "avg_utilization_pct": 100 * float(np.mean([batch_capacity_size(b["items"], item_sizes) / capacity for b in cpsat_batches])) if capacity > 0 else 0.0,
-                    "total_hours": cpsat_hours, "total_cost": cpsat_cost, "batches": cpsat_batches,
-                    "final_routes": cpsat_routes, "infeasible": False,
-                }
+    tab_compare = tabs[len(METHODS)]
 
     with tab_compare:
         st.markdown("### Strategievergleich")
         comp_candidates = [summaries[m[0]] for m in METHODS]
-        if cpsat_summary is not None:
-            comp_candidates = comp_candidates + [cpsat_summary]
         comp_rows = [{
             "Strategie": s["label"],
             "Laufdistanz": f"{s['total_distance']:.0f} m",
@@ -688,31 +553,6 @@ Unsicherheits-Bonus für wenig ausprobierte Kombinationen. Ergebnis: durchweg k�
 realistischen Instanzgrößen (Details zu beiden Erweiterungen und den zahlreichen geprüften, aber
 wieder verworfenen Alternativen - u. a. Tabu Search, Simulated Annealing, Ant/Bee-Colony-Ideen -
 siehe README).
-
-**Exakter Solver (CP-SAT):** Löst kleine Instanzen exakt, um sie mit den eigenen Heuristiken
-vergleichen zu können. CP-SAT löst Zuteilung UND Route in einem einzigen,
-gemeinsam gelösten Modell: Zuordnungsvariablen je Bestellung/Batch plus ein echter Hamiltonkreis
-(`AddCircuit`) je Batch-Slot über Depot und alle Positionen, wobei nicht zugeteilte Positionen per
-Selbstschleife übersprungen werden - ein grundsätzlich anderer Lösungsweg als die oben beschriebene
-Suche, die sich schrittweise über viele lokale Züge einer guten Lösung annähert, statt sie in einem
-Zug als Ganzes zu modellieren. Ein erster Versuch mit der (eigentlich naheliegenderen) OR-Tools-
-Routing-Bibliothek scheiterte an einer echten Absturzgefahr (Segfault) bei bestimmten Konstruktions-
-heuristiken und an mangelnder Robustheit bei Bestellungen mit mehr als 2-3 Positionen - Details
-dazu im Modul-Docstring von `batch_ortools_solver.py` und im README. Da CP-SAT für den vollen
-Suchraum exponentiell viele Möglichkeiten prüfen müsste, ist es nur für kleine Instanzen sinnvoll
-(button-gesteuert, mit Zeitlimit) - wird die Zeit ausgeschöpft, ohne dass Optimalität bewiesen
-werden konnte, zeigt das Ergebnis ehrlich "Beste gefundene Lösung" statt "Nachweislich optimal".
-
-**Touren exakt nachschärfen (optionale Politur, nicht zu verwechseln mit dem Solver oben):** Ein
-zweiter, kleinerer CP-SAT-Einsatz - löst NICHT das gesamte Zuteilungs+Routing-Problem neu, sondern
-nur die Route EINES bereits feststehenden Batches exakt (ein einzelner Hamiltonkreis über Depot und
-seine Positionen). Verfügbar direkt beim Hauptergebnis oben sowie je Strategie-Tab, per Button.
-Grund für zwei getrennte Werkzeuge: das Zuteilungsproblem selbst bleibt für CP-SAT auch bei
-mittelgroßen Instanzen zu groß (siehe oben), aber die 2-opt-Route EINES einzelnen, bereits fest
-zugeteilten Batches lässt sich auch bei recht großen Batches (bis ~40-60 Positionen) noch in
-Sekundenbruchteilen bis wenigen Sekunden beweisbar optimal lösen. Behält je Batch immer die kürzere
-der beiden Routen, kann das Ergebnis also nie verschlechtern - Details und die gemessene
-Optimalitätslücke von 2-opt für dieses Lagerlayout im README.
 
 **Warum die Pickzeit konstant bleibt:** Jede Position wird unabhängig von der Batching-Strategie
 UND unabhängig von der Kapazitätsart genau einmal gepickt - die reine Pickzeit (Greifen/Scannen)

@@ -14,11 +14,6 @@ Bedeutung:
   die Route INNERHALB eines einzelnen, bereits feststehenden Batches - ein
   gemeinsamer Iterationszähler über alle Batches hätte hier keine echte
   fachliche Bedeutung, da jeder Batch unabhängig geroutet wird.
-
-`render_exact_polish_section` (optionale CP-SAT-Politur) ist bewusst
-eigenständig statt Teil von render_batching_panel: auf Nutzeranfrage auch
-für das oben zusammengefasste Hauptergebnis in app.py aufrufbar, ohne dafür
-den gesamten Strategie-Tab-Inhalt mit aufzubauen.
 """
 
 import time
@@ -26,11 +21,8 @@ import time
 import numpy as np
 import streamlit as st
 
-from batch_constants import CPSAT_COOLDOWN_BUFFER, CPSAT_POLISH_TIME_LIMIT_MAX_S, CPSAT_POLISH_TOTAL_BUDGET_S
 from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, route_leg_distances
-from batch_ortools_solver import apply_exact_tsp_polish
 from batch_pdf_export import generate_batch_plan_pdf
-from batch_presets import cooldown_record, cooldown_seconds_remaining
 from batch_visualization import build_batch_detail_figure, build_warehouse_overview_figure
 from batch_warehouse import distance_scenario_key
 
@@ -61,122 +53,6 @@ def generate_batch_plan_pdf_cached(label, batches, final_routes, _order_ids_by_i
     den unterstrichenen (von Streamlits Hashing ausgenommenen) Numpy-
     Argumenten steckt, siehe `pdf_cache_key`."""
     return generate_batch_plan_pdf(label, batches, final_routes, _order_ids_by_item, _aisles, _positions, _D, capacity, capacity_mode, _item_sizes, walking_speed_mps, pick_time_s, cost_per_hour)
-
-
-def render_exact_polish_section(prefix, label, batches, final_routes, total_dist, order_ids_by_item, aisles, positions, aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour):
-    """Button-gesteuerte, optionale CP-SAT-Politur-Sektion (siehe
-    batch_ortools_solver.py: apply_exact_tsp_polish) - löst jede Batch-Route
-    ZUSÄTZLICH exakt und behält je Batch die kürzere. Eigenständige Funktion
-    (nicht Teil von render_batching_panel), damit sie sowohl je Strategie-Tab
-    als auch für das oben zusammengefasste Hauptergebnis (der jeweils
-    bessere von beiden Strategien, siehe app.py) aufgerufen werden kann, ohne
-    den gesamten Tab-Inhalt (Umverteilungs-Historie, Batch-Detail-Slider)
-    zu duplizieren. `prefix` muss über alle Aufrufe hinweg eindeutig sein
-    (eigener Session-State-Namespace je Aufrufstelle)."""
-    st.markdown("**🎯 Touren exakt nachschärfen (optional)**")
-    st.caption(
-        "Löst jede der oben gezeigten Batch-Routen ZUSÄTZLICH exakt mit CP-SAT (statt "
-        "Nearest-Neighbor + 2-opt) und behält je Batch die kürzere Route - die Batch-Zuteilung "
-        "selbst (welche Bestellung in welchem Batch landet) bleibt dabei unverändert, nur die "
-        "Reihenfolge innerhalb jeder Route wird ggf. nachgeschärft. Wegen der Rechenzeit "
-        "button-gesteuert, nicht automatisch."
-    )
-    polish_time_limit = st.slider(
-        "Zeitlimit je Batch (Sekunden)", 1, CPSAT_POLISH_TIME_LIMIT_MAX_S, CPSAT_POLISH_TIME_LIMIT_MAX_S,
-        key=f"{prefix}_polish_time_limit",
-        help=f"Zusätzlich hart auf {CPSAT_POLISH_TOTAL_BUDGET_S}s über ALLE Batches zusammen "
-        "gedeckelt, unabhängig von diesem Regler - bei vielen großen Batches werden die "
-        "verbleibenden dann unverändert mit ihrer bisherigen Route übernommen.",
-    )
-    # Der Key muss ALLES enthalten, wovon D (die Distanzmatrix) abhängt - nicht
-    # nur aisle_spacing/aisle_length (Code-Review-Fund, 2026-08-23), sondern
-    # auch aisles/positions selbst: die Batch-ITEM-INDIZES allein reichen nicht,
-    # da ein direktes Bearbeiten einer Gang-/Positions-Zelle in der Bestell-
-    # positionstabelle (st.data_editor) die Zeilen-Indizes unverändert lassen
-    # kann (kein Regenerieren, siehe gen_key in app.py), aber D trotzdem
-    # ändert. Nutzt dafür distance_scenario_key (batch_warehouse.py) statt die
-    # vier Felder hier ein drittes Mal von Hand nachzubauen - genau diese
-    # Verdopplung (unabhängig von app.py's eigenem D-Cache-Key gepflegt) war
-    # selbst ein Code-Review-Fund. Ohne all das hätte eine Änderung, die
-    # zufällig dieselbe Batch-Zuteilung ergibt, ein bereits veraltetes
-    # Politur-Ergebnis (falsche Distanz, aus dem alten D berechnet) weiter als
-    # gültig angezeigt.
-    polish_key = (
-        tuple(tuple(b["items"]) for b in batches), polish_time_limit,
-        distance_scenario_key(aisles, positions, aisle_spacing, aisle_length),
-    )
-
-    polish_clicked = st.button("🎯 Touren exakt nachschärfen", key=f"{prefix}_polish_btn")
-    if polish_clicked:
-        # cooldown_seconds_remaining/cooldown_record (batch_presets.py) statt
-        # eigener, hier dupliziert gepflegter Cooldown-Logik (Code-Review-
-        # Fund, 2026-08-23) - derselbe gemeinsame Helfer wie beim CP-SAT-Tab
-        # in app.py, skaliert mit der zuletzt TATSÄCHLICH verbrauchten
-        # Rechenzeit: ein Politur-Klick kann bis zu CPSAT_POLISH_TOTAL_BUDGET_S
-        # (20s) dauern - ohne Skalierung ließe sich derselbe ~20s-Job alle 5s
-        # erneut auslösen, genau das Missbrauchsmuster, vor dem auch der
-        # CP-SAT-Tab seinen Nutzer schützt.
-        wait = cooldown_seconds_remaining(f"{prefix}_polish", CPSAT_COOLDOWN_BUFFER)
-        if wait > 0:
-            st.warning(f"⏳ Bitte noch {wait:.0f}s warten, bevor Sie erneut nachschärfen.")
-        else:
-            with st.spinner(f"CP-SAT schärft die Touren nach (bis zu {polish_time_limit}s je Batch)..."):
-                polished_routes, polish_summary = apply_exact_tsp_polish(
-                    batches, final_routes, D, polish_time_limit, CPSAT_POLISH_TOTAL_BUDGET_S,
-                )
-            cooldown_record(f"{prefix}_polish", polish_summary["elapsed_s"])
-            st.session_state[f"{prefix}_polish_result"] = {
-                "routes": polished_routes, "summary": polish_summary, "key": polish_key,
-            }
-
-    polish_result = st.session_state.get(f"{prefix}_polish_result")
-    if polish_result is not None and polish_result["key"] == polish_key:
-        polish_summary = polish_result["summary"]
-        polished_routes = polish_result["routes"]
-        saved_pct = 0.0 if total_dist <= 0 else 100 * (total_dist - polish_summary["total_distance"]) / total_dist
-
-        if polish_summary["n_skipped_budget"] > 0:
-            st.warning(
-                f"⏱️ Zeitbudget ({CPSAT_POLISH_TOTAL_BUDGET_S}s) ausgeschöpft - "
-                f"{polish_summary['n_skipped_budget']} von {polish_summary['n_batches']} Batches "
-                "unverändert übernommen."
-            )
-        if polish_summary["n_improved"] == 0:
-            st.info(
-                "Keine Batch-Route ließ sich verbessern - die 2-opt-Lösung war für alle geprüften "
-                "Batches bereits nachweislich optimal oder zumindest ebenso gut."
-            )
-        else:
-            st.success(f"✅ {polish_summary['n_improved']} von {polish_summary['n_attempted']} geprüften Batches wurden kürzer.")
-        if polish_summary["n_not_proven_optimal"] > 0:
-            st.caption(
-                f"⚠️ Bei {polish_summary['n_not_proven_optimal']} von {polish_summary['n_attempted']} geprüften "
-                "Batches konnte Optimalität innerhalb des Zeitlimits nicht bewiesen werden (bestmögliche in "
-                "der Zeit gefundene Lösung, ggf. mit mehr Zeit noch verbesserbar)."
-            )
-
-        pm1, pm2, pm3 = st.columns(3)
-        pm1.metric(
-            "Laufdistanz nach Politur", f"{polish_summary['total_distance']:.0f} m",
-            delta=f"-{saved_pct:.1f} %" if saved_pct > 0 else None, delta_color="inverse",
-        )
-        pm2.metric("Geprüfte Batches", f"{polish_summary['n_attempted']}/{polish_summary['n_batches']}")
-        pm3.metric("Rechenzeit", f"{polish_summary['elapsed_s']:.1f} s")
-
-        fig_polish = build_warehouse_overview_figure(aisles, positions, aisle_length, aisle_spacing, batches, polished_routes)
-        st.plotly_chart(fig_polish, width="stretch", key=f"{prefix}_polish_plot")
-
-        pdf_bytes_polish = generate_batch_plan_pdf_cached(
-            f"{label} + CP-SAT-Politur", batches, polished_routes, order_ids_by_item, aisles, positions, D,
-            capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour,
-            pdf_cache_key(order_ids_by_item, aisles, positions, aisle_spacing, aisle_length, item_sizes),
-        )
-        st.download_button(
-            "📄 Nachgeschärften Batchplan als PDF herunterladen", data=pdf_bytes_polish,
-            file_name=f"batchplan_{prefix}_polished.pdf", mime="application/pdf", key=f"{prefix}_polish_pdf_download",
-        )
-    elif polish_result is not None:
-        st.info("⚠️ Die Eingaben haben sich seit dieser Politur geändert - bitte erneut nachschärfen.")
 
 
 def render_batching_panel(prefix, label, batches, histories, ib_history, order_ids_by_item, aisles, positions, aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes, walking_speed_mps, pick_time_s, cost_per_hour):
@@ -314,12 +190,6 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
     st.download_button(
         "📄 Batchplan als PDF herunterladen", data=pdf_bytes,
         file_name=f"batchplan_{prefix}.pdf", mime="application/pdf", key=f"{prefix}_pdf_download",
-    )
-
-    render_exact_polish_section(
-        prefix, label, batches, final_routes, total_dist, order_ids_by_item, aisles, positions,
-        aisle_length, aisle_spacing, D, capacity, capacity_mode, item_sizes, walking_speed_mps,
-        pick_time_s, cost_per_hour,
     )
 
     return {

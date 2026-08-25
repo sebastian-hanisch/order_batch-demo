@@ -41,9 +41,8 @@ from batch_local_search import (
     route_batch,
     two_opt_history,
 )
-from batch_ortools_solver import apply_exact_tsp_polish, estimated_model_size, exact_tsp_single_batch, recommended_num_batches, solve_with_cpsat
 from batch_pdf_export import generate_batch_plan_pdf
-from batch_presets import SETTING_SPECS, apply_preset, bounds, cooldown_record, cooldown_seconds_remaining, load_permalink_settings, sync_query_params
+from batch_presets import SETTING_SPECS, apply_preset, bounds, load_permalink_settings, sync_query_params
 from batch_visualization import _batch_style
 from batch_warehouse import aisle_x, build_distance_matrix, depot_distance, item_distance
 
@@ -850,9 +849,10 @@ def test_classify_comparison_identifies_clear_winner():
 
 def test_classify_comparison_top_two_tied_with_three_candidates():
     # Code-Review-Fund 2026-08-23: die top_two_tied-Verzweigung (len(ranked) > 2)
-    # hatte bislang keinerlei Testabdeckung, obwohl app.py sie in Produktion
-    # mit bis zu 4 echten Kandidaten (Greedy-Seed, Zonen-Sweep, optional
-    # CP-SAT) aufruft - beide bestehenden Tests oben nutzten nur 2 Kandidaten.
+    # hatte bislang keinerlei Testabdeckung - beide bestehenden Tests oben
+    # nutzten nur 2 Kandidaten. classify_comparison ist generisch für
+    # beliebig viele Kandidaten gebaut, auch wenn app.py aktuell nur zwei
+    # (Greedy-Seed, Zonen-Sweep) übergibt.
     # A und B liegen innerhalb der Schwelle beieinander (0,5%), C liegt klar
     # dahinter (50%) - insgesamt also NICHT alle gleichauf, aber die besten
     # zwei schon.
@@ -897,206 +897,6 @@ def test_batching_reduces_total_distance_versus_singleton_baseline():
     greedy_dist = sum(route_batch(b["items"], D)[-1][1] for b in greedy_batches)
 
     assert greedy_dist < naive_dist
-
-
-# ---------------------------------------------------------------------------
-# CP-SAT-Vergleichsloeser (batch_ortools_solver.py) - auf Nutzeranfrage
-# ergaenzt fuer einen exakten/nahe-exakten Vergleich auf kleinen Instanzen.
-# Alle Tests halten die Instanzen bewusst winzig (<=8 Positionen), damit die
-# Testsuite schnell bleibt - siehe Modul-Docstring fuer die Modellgroesse.
-# ---------------------------------------------------------------------------
-
-def test_estimated_model_size_formula():
-    assert estimated_model_size(n_items=5, num_batches=3) == 3 * 6 * 6
-
-
-def test_recommended_num_batches_never_below_theoretical_minimum():
-    orders = {1: [0, 1, 2], 2: [3, 4, 5], 3: [6, 7]}
-    item_sizes = np.ones(8)
-    # Gesamtgroesse 8, Kapazitaet 3 -> mindestens ceil(8/3)=3 Batches
-    n = recommended_num_batches(orders, capacity=3, item_sizes=item_sizes, slack=0)
-    assert n >= 3
-
-
-def test_recommended_num_batches_never_exceeds_order_count():
-    orders = {1: [0], 2: [1]}
-    item_sizes = np.ones(2)
-    n = recommended_num_batches(orders, capacity=100, item_sizes=item_sizes, slack=5)
-    assert n <= len(orders)
-
-
-def test_solve_with_cpsat_matches_known_optimum_on_tiny_instance():
-    # Handnachvollziehbare Instanz: 3 Bestellungen, Kapazitaet 3.
-    orders = {1: [0], 2: [1], 3: [2, 3]}
-    aisles = np.array([0, 1, 2, 3])
-    positions = np.array([2.0, 2.0, 2.0, 2.0])
-    item_sizes = np.ones(4)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
-
-    batches, status, wall_time = solve_with_cpsat(orders, capacity=3, item_sizes=item_sizes, D=D, num_batches=3, time_limit_s=10)
-
-    assert status == "OPTIMAL"
-    assert batches is not None
-    total = sum(route_distance(b["route"], D) for b in batches)
-    assert total == pytest.approx(34.0, abs=0.5)
-
-
-def test_solve_with_cpsat_covers_every_order_exactly_once():
-    orders, aisles, positions, _volumes = _sample_orders(n_orders=6, items_min=1, items_max=2, n_aisles=4, aisle_length=15.0, seed=21)
-    item_sizes = _positions_sizes(aisles)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=15.0)
-
-    batches, status, wall_time = solve_with_cpsat(orders, capacity=4, item_sizes=item_sizes, D=D, num_batches=6, time_limit_s=10)
-
-    assert batches is not None
-    covered = sorted(oid for b in batches for oid in b["order_ids"])
-    assert covered == sorted(orders.keys())
-    seen = set()
-    for b in batches:
-        for oid in b["order_ids"]:
-            assert oid not in seen, "Bestellung wurde in mehreren Batches gefunden"
-            seen.add(oid)
-
-
-def test_solve_with_cpsat_respects_capacity():
-    orders, aisles, positions, _volumes = _sample_orders(n_orders=6, items_min=1, items_max=2, n_aisles=4, aisle_length=15.0, seed=22)
-    item_sizes = _positions_sizes(aisles)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=15.0)
-    capacity = 4
-
-    batches, status, wall_time = solve_with_cpsat(orders, capacity, item_sizes, D, num_batches=6, time_limit_s=10)
-
-    assert batches is not None
-    for b in batches:
-        assert sum(item_sizes[i] for i in b["items"]) <= capacity + 1e-6
-
-
-def test_solve_with_cpsat_route_visits_every_item_of_its_batch_once():
-    orders, aisles, positions, _volumes = _sample_orders(n_orders=5, items_min=1, items_max=2, n_aisles=4, aisle_length=15.0, seed=23)
-    item_sizes = _positions_sizes(aisles)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=15.0)
-
-    batches, status, wall_time = solve_with_cpsat(orders, capacity=4, item_sizes=item_sizes, D=D, num_batches=5, time_limit_s=10)
-
-    assert batches is not None
-    for b in batches:
-        assert sorted(b["route"]) == sorted(b["items"])
-
-
-def test_solve_with_cpsat_single_order_single_batch():
-    orders = {1: [0, 1]}
-    aisles = np.array([0, 1])
-    positions = np.array([3.0, 3.0])
-    item_sizes = np.ones(2)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=15.0)
-
-    batches, status, wall_time = solve_with_cpsat(orders, capacity=5, item_sizes=item_sizes, D=D, num_batches=1, time_limit_s=5)
-
-    assert status == "OPTIMAL"
-    assert len(batches) == 1
-    assert batches[0]["order_ids"] == [1]
-
-
-# ---------------------------------------------------------------------------
-# Exakte TSP-Politur je Batch (CP-SAT, apply_exact_tsp_polish)
-# ---------------------------------------------------------------------------
-
-def test_exact_tsp_single_batch_matches_brute_force_on_tiny_instance():
-    import itertools
-
-    aisles = np.array([0, 2, 1, 3, 0, 2])
-    positions = np.array([5.0, 25.0, 12.0, 3.0, 18.0, 9.0])
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
-    items = list(range(6))
-
-    best_dist = min(route_distance(list(p), D) for p in itertools.permutations(items))
-    route, dist, status = exact_tsp_single_batch(items, D, time_limit_s=10)
-
-    assert status == "OPTIMAL"
-    assert dist == pytest.approx(best_dist, abs=1e-6)
-    assert route_distance(route, D) == pytest.approx(best_dist, abs=1e-6)
-    assert sorted(route) == items
-
-
-def test_exact_tsp_single_batch_handles_single_item():
-    aisles = np.array([2])
-    positions = np.array([7.0])
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
-
-    route, dist, status = exact_tsp_single_batch([0], D, time_limit_s=5)
-
-    assert status == "OPTIMAL"
-    assert route == [0]
-    assert dist == pytest.approx(route_distance([0], D))
-
-
-def test_exact_tsp_single_batch_handles_empty():
-    aisles = np.array([0])
-    positions = np.array([0.0])
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
-
-    route, dist, status = exact_tsp_single_batch([], D, time_limit_s=5)
-
-    assert status == "OPTIMAL"
-    assert route == []
-    assert dist == 0.0
-
-
-def test_apply_exact_tsp_polish_never_worse_than_input_routes():
-    orders, aisles, positions, _volumes = _sample_orders(n_orders=8, items_min=1, items_max=3, n_aisles=5, aisle_length=20.0, seed=31)
-    item_sizes = _positions_sizes(aisles)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=20.0)
-    batches = greedy_seed_batching(orders, capacity=6, aisles=aisles, positions=positions, aisle_spacing=3.0, item_sizes=item_sizes)
-    routes = [route_batch(b["items"], D)[-1][0] for b in batches]
-    before_total = sum(route_distance(r, D) for r in routes)
-
-    polished_routes, summary = apply_exact_tsp_polish(batches, routes, D, per_batch_time_limit_s=3, total_time_budget_s=30)
-
-    assert summary["total_distance"] <= before_total + 1e-6
-    assert summary["total_distance"] == pytest.approx(sum(route_distance(r, D) for r in polished_routes))
-    for b, r in zip(batches, polished_routes):
-        assert sorted(r) == sorted(b["items"])
-
-
-def test_apply_exact_tsp_polish_improves_a_deliberately_bad_starting_route():
-    import itertools
-
-    aisles = np.array([0, 3, 1, 4, 2])
-    positions = np.array([2.0, 28.0, 15.0, 4.0, 20.0])
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=30.0)
-    items = list(range(5))
-    batches = [{"order_ids": [1], "items": items}]
-
-    best_dist = min(route_distance(list(p), D) for p in itertools.permutations(items))
-    # Bewusst eine schlechte Route uebergeben (unsortierte Reihenfolge, nicht
-    # die per Brute-Force gefundene beste) - real ueberpruefen statt
-    # anzunehmen, dass sie tatsaechlich schlechter ist.
-    bad_route = [1, 3, 0, 4, 2]
-    bad_dist = route_distance(bad_route, D)
-    assert bad_dist > best_dist + 1e-6
-
-    polished_routes, summary = apply_exact_tsp_polish(batches, [bad_route], D, per_batch_time_limit_s=5, total_time_budget_s=30)
-
-    assert summary["n_improved"] == 1
-    assert route_distance(polished_routes[0], D) == pytest.approx(best_dist, abs=1e-6)
-
-
-def test_apply_exact_tsp_polish_respects_total_time_budget():
-    orders, aisles, positions, _volumes = _sample_orders(n_orders=6, items_min=1, items_max=2, n_aisles=4, aisle_length=15.0, seed=32)
-    item_sizes = _positions_sizes(aisles)
-    D = build_distance_matrix(aisles, positions, aisle_spacing=3.0, aisle_length=15.0)
-    batches = greedy_seed_batching(orders, capacity=4, aisles=aisles, positions=positions, aisle_spacing=3.0, item_sizes=item_sizes)
-    routes = [route_batch(b["items"], D)[-1][0] for b in batches]
-
-    # Negatives Budget statt 0: garantiert bereits "ueberschritten" ohne auf
-    # die Uhrzeitaufloesung angewiesen zu sein (unter Windows kann time.time()
-    # eine Aufloesung von ~15ms haben - ein Budget von exakt 0 waere damit
-    # nicht zuverlaessig als "sofort ueberschritten" erkennbar).
-    polished_routes, summary = apply_exact_tsp_polish(batches, routes, D, per_batch_time_limit_s=3, total_time_budget_s=-1)
-
-    assert summary["n_attempted"] == 0
-    assert summary["n_skipped_budget"] == len(batches)
-    assert polished_routes == routes
 
 
 # ---------------------------------------------------------------------------
@@ -1192,38 +992,6 @@ def _seed_session_state_from_specs(overrides=None):
     overrides = overrides or {}
     for state_key, spec in SETTING_SPECS.items():
         st.session_state[state_key] = overrides.get(state_key, spec.default)
-
-
-def test_cooldown_seconds_remaining_is_zero_for_a_fresh_prefix():
-    remaining = cooldown_seconds_remaining("test_fresh_prefix_xyz", buffer_s=5.0)
-    assert remaining == 0.0
-
-
-def test_cooldown_scales_with_actual_recorded_duration_not_a_fixed_value():
-    # Code-Review-Fund 2026-08-23: der gemeinsame Cooldown-Helfer ersetzt
-    # sowohl den CP-SAT-Tab (der zuvor die KONFIGURIERTE Zeitlimit-Obergrenze
-    # statt der tatsaechlichen Laufzeit nutzte) als auch die Politur-Sektion.
-    # Zwei verschiedene tatsaechliche Laufzeiten muessen zwei verschiedene
-    # Cooldown-Laengen ergeben - das ist die Kernaussage des Fixes.
-    cooldown_record("test_fast_action", duration_s=1.0)
-    cooldown_record("test_slow_action", duration_s=15.0)
-
-    fast_remaining = cooldown_seconds_remaining("test_fast_action", buffer_s=5.0)
-    slow_remaining = cooldown_seconds_remaining("test_slow_action", buffer_s=5.0)
-
-    assert fast_remaining == pytest.approx(6.0, abs=0.5)
-    assert slow_remaining == pytest.approx(20.0, abs=0.5)
-    assert slow_remaining > fast_remaining
-
-
-def test_cooldown_expires_once_enough_time_has_passed():
-    prefix = "test_expiring_action"
-    cooldown_record(prefix, duration_s=2.0)
-    # Zeitpunkt der Aufzeichnung kuenstlich in die Vergangenheit verschieben,
-    # statt in einem Test tatsaechlich zu schlafen.
-    st.session_state[f"{prefix}_cooldown_last_time"] -= 100.0
-
-    assert cooldown_seconds_remaining(prefix, buffer_s=5.0) == 0.0
 
 
 def test_sync_query_params_writes_every_active_setting_specs_url_param():

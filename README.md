@@ -12,15 +12,14 @@ Selbe Methodik wie bei den anderen Demos: Konstruktionsheuristik(en) + Bewertung
 Ergebnis zuerst ("Ihr optimierter Batchplan"), Methodenvergleich sekundär im Expander.
 
 > **Hinweis zu allen Zeit-/Performance-Zahlen in diesem README:** Sämtliche Benchmark- und
-> Rechenzeit-Angaben (Inter-Batch-Suche, Don't-Look-Bits, Iterated Local Search, CP-SAT) wurden auf
+> Rechenzeit-Angaben (Inter-Batch-Suche, Don't-Look-Bits, Iterated Local Search) wurden auf
 > einem lokalen Entwicklungsrechner gemessen (AMD Ryzen 7 7800X3D, 8 Kerne/16 Threads, ~4,2 GHz,
 > 31 GB RAM) - aktuelle, vergleichsweise starke Desktop-Hardware mit hoher Single-Core-Leistung.
 > Auf **Streamlit Community Cloud** (siehe Abschnitt 3 unten, der kostenlose Hosting-Weg für diese
 > Demo) läuft die App typischerweise auf deutlich schwächerer, geteilter Hardware (oft nur 1
 > geteilte vCPU, ~1 GB RAM). Die tatsächlichen Zeiten dort - insbesondere die Inter-Batch-Suche bei
-> großen Instanzen, das `ILS_TIME_BUDGET_S`-Zeitbudget und die CP-SAT-Zeitlimits - dürften spürbar
-> länger ausfallen als hier dokumentiert. Die Konstanten (`ILS_TIME_BUDGET_S`,
-> `CPSAT_MAX_TIME_LIMIT`, `CPSAT_MAX_MODEL_SIZE` in `batch_constants.py`) sind bislang NICHT für
+> großen Instanzen und das `ILS_TIME_BUDGET_S`-Zeitbudget - dürften spürbar länger ausfallen als
+> hier dokumentiert. Die Konstante `ILS_TIME_BUDGET_S` (`batch_constants.py`) ist bislang NICHT für
 > schwächere Hosting-Hardware nachgemessen oder angepasst worden.
 
 ## Dateistruktur
@@ -38,8 +37,7 @@ Ergebnis zuerst ("Ihr optimierter Batchplan"), Methodenvergleich sekundär im Ex
 | `batch_ui_panel.py` | Wiederverwendbares UI-Panel je Batching-Strategie |
 | `batch_pdf_export.py` | PDF-Batchplan-Export |
 | `batch_feedback.py` | Feedback-Logging (CSV) |
-| `batch_ortools_solver.py` | Exakter/nahe-exakter CP-SAT-Vergleichslöser (Zuteilung + Routing gemeinsam) |
-| `tests/test_app.py` | Testsuite (99 Tests) |
+| `tests/test_app.py` | Testsuite (82 Tests) |
 
 ## Funktionsumfang
 
@@ -67,10 +65,6 @@ Ergebnis zuerst ("Ihr optimierter Batchplan"), Methodenvergleich sekundär im Ex
 - Primäransicht vergleicht die beste eigene Strategie gegen eine Einzelkommissionierungs-Baseline
   (eine Tour je Bestellung, kein Batching) - macht den wirtschaftlichen Nutzen von Batching an
   sich sichtbar, nicht nur den Unterschied zwischen den beiden Strategien.
-- Optionaler Vergleich mit Googles **CP-SAT** (Open Source, exakter Constraint-Solver, Teil von
-  OR-Tools) auf kleinen Instanzen - löst Zuteilung UND Routing gemeinsam in einem Modell, statt
-  nacheinander wie die eigenen Heuristiken. Button-gesteuert mit Zeitlimit, da nur für kleine
-  Instanzen praktikabel (auf Nutzeranfrage ergänzt, siehe Abschnitt unten).
 - Direkt editierbare Positionstabelle, drei Ein-Klick-Beispielszenarien, Permalink (URL spiegelt
   die aktuelle Konfiguration), PDF-Batchplan-Export, Feedback-Mechanismus.
 
@@ -144,50 +138,6 @@ Tourenplanung-Demo: Cheapest-Insertion in die BESTEHENDE Route des Zielbatches (
 je Kandidat), erst der letzte Historien-Eintrag wird zusätzlich per vollem 2-opt poliert. Damit
 läuft dieselbe Suche bei 80 Bestellungen in 1-11 Sekunden statt mehreren Minuten, bei den
 realistischen Standardeinstellungen (~24 Bestellungen) im Bruchteil einer Sekunde.
-
-## Exakter Solver: ein gescheiterter erster Versuch, dann CP-SAT
-
-Auf Nutzeranfrage ("Ein exaktes Verfahren zum Vergleich für kleine Instanzen... vielleicht über
-OR-Tools") als Vergleichsmaßstab ergänzt. Der naheliegende erste Ansatz - die OR-Tools-
-**Routing-Bibliothek** (dieselbe, die die Tourenplanung-Demo für ihren OR-Tools-Tab nutzt), jede
-Position als Routing-Knoten, "alle Positionen einer Bestellung müssen im selben Batch/Fahrzeug
-landen" über eine `VehicleVar`-Gleichheitsnebenbedingung erzwungen - scheiterte an zwei
-unabhängigen Problemen:
-
-1. **Rohe `VehicleVar`-Gleichheit wird von den Standard-Konstruktionsheuristiken ignoriert.** Der
-   Solver meldete praktisch immer `ROUTING_INVALID`, unabhängig von Instanzgröße oder gewählter
-   Heuristik.
-2. **Workaround über `AddPickupAndDelivery`-Verkettung** (OR-Tools' dokumentierter Mechanismus für
-   "gleiches Fahrzeug", eigentlich für Abhol-/Lieferpaare gedacht) funktionierte korrekt - aber nur
-   für Bestellungen mit sehr wenigen Positionen (1-2). Schon ab 4-6 Positionen je Bestellung fand
-   der Solver **gar keine** zulässige Lösung mehr, auch mit mehr Zeit oder mehr Fahrzeugen nicht -
-   die Kettenlänge pro Bestellung war der eigentliche Bruchpunkt, nicht die Gesamtinstanzgröße.
-   Schlimmer: **mit der Konstruktionsheuristik `PATH_CHEAPEST_ARC` stürzte der native Solver bei
-   etwas größeren Instanzen mit einem echten Segfault ab** (empirisch reproduziert) - das hätte bei
-   Live-Einsatz den gesamten Streamlit-Prozess für alle gleichzeitigen Nutzer abgeschossen, nicht
-   nur einen Fehler im Browser gezeigt. Ein inakzeptables Risiko für eine öffentlich erreichbare
-   Demo.
-
-**Die Lösung: CP-SAT statt der Routing-Bibliothek.** Google CP-SAT (derselbe OR-Tools-Baukasten,
-aber der allgemeine Constraint-Solver statt der spezialisierten Routing-Bibliothek) erlaubt eine
-saubere gemeinsame Formulierung: Zuordnungsvariablen $y_{o,k}$ (Bestellung $o$ → Batch-Slot $k$)
-plus je Batch-Slot ein echter Hamiltonkreis (`model.AddCircuit`) über Depot und ALLE Positionen,
-wobei Positionen, deren Bestellung nicht diesem Slot zugeteilt ist, per Selbstschleife
-übersprungen werden ("optional node"-Muster). Validiert gegen dieselben 12 Referenzinstanzen mit
-bekanntem Optimum (siehe Benchmark oben): **trifft das Optimum in allen 12 Fällen** (kleine
-Abweichungen von <0,02 lediglich Rundungsartefakte der Integer-Skalierung, die CP-SAT intern
-braucht). Kein einziger Absturz in allen Stresstests, selbst bei 80 Bestellungen/309 Positionen -
-im schlimmsten Fall dauert der reine Modellaufbau spürbar lange (statt zu crashen), was
-`CPSAT_MAX_MODEL_SIZE` als harte Obergrenze verhindert (button deaktiviert sich mit einer
-Erklärung statt die App einzufrieren).
-
-**Ehrlicher Nebenbefund:** Bei realistischen Instanzgrößen (24 Bestellungen, 20s Zeitlimit) fand
-CP-SAT nur eine Lösung, die ca. **1,7% schlechter** war als die eigene Heuristik (Greedy-Seed +
-Inter-Batch-Suche + 2-opt) - und das, obwohl CP-SAT exakt sucht. Exakte Verfahren sind bei NP-
-schweren Problemen jenseits einer gewissen Größe nicht automatisch besser als gute Heuristiken,
-wenn ihnen die Zeit zum Beweisen der Optimalität fehlt - für solche Fälle zeigt die App explizit
-"Beste gefundene Lösung" statt "Nachweislich optimal" an, statt Optimalität zu suggerieren, die
-nicht bewiesen wurde.
 
 ## Benchmark: Clustering als Konstruktionsheuristik - dreimal geprüft, dreimal kein Mehrwert
 
@@ -752,166 +702,6 @@ Drei neue Tests für `route_leg_distances` (Summe entspricht `route_distance`, k
 Abschnitte, leere Route). Live im Browser verifiziert: Hover-Text je Halt und beide neuen
 Bildunterschriften rendern korrekt.
 
-## Optionale Politur: exaktes TSP je Batch statt Ratliff/Rosenthal-DP
-
-Auf Nutzeranfrage ("gibt's wirklich nichts mehr zur Tourenverbesserung?") zunächst gemessen, WIE
-GROSS die tatsächliche Optimalitätslücke von 2-opt für dieses konkrete Distanzmodell (parallele
-Gänge zwischen zwei Quergassen) überhaupt noch ist - per Vollenumeration (n=6-8) und CP-SAT-exakter
-Einzel-Batch-Lösung (n=10-40) gemessen, unabhängig von der Batch-Zuteilung:
-
-| Batch-Größe | Lücke 2-opt vs. echtes Optimum |
-|---|---|
-| 6-8 (Vollenumeration) | 0,0-0,6% |
-| 10 | Ø 0,8% |
-| 15-30 | Ø 1,4-1,5% |
-| 40 | Ø 2,0% (Ausreißer bis 5,15%) |
-
-Eine reale, aber kleine Lücke - lohnt eine genauere Betrachtung. Für DIESES Lagerlayout (Ein-Block,
-zwei Quergassen) existiert ein klassischer exakter Algorithmus in Polynomialzeit: Ratliff & Rosenthal
-(1983), "Order-Picking in a Rectangular Warehouse: A Solvable Case of the Traveling Salesman
-Problem", Operations Research 31(3):507-521 - eine Dynamic-Programming-Lösung über Zustände je Gang,
-später von Roodbergen & de Koster (2001) auf Zwei-Block-Lager erweitert. Passt exakt zum Lagermodell
-dieser App. Drei Recherche-Runden (Web-Suche + Fetch mehrerer Paper, u. a. eine 2024er
-graphentheoretische Neuformulierung mit 7 Zuständen) konnten die kritische Zustands-Übergangstabelle
-("Table 2" im Originalpaper) nicht zuverlässig extrahieren, und keine verifizierbare
-Referenzimplementierung war auffindbar (Code laut mehreren Papern nur "auf Anfrage bei den Autoren"
-verfügbar) - ein mehrstufiger DP-Algorithmus aus einer unvollständig verstandenen Quelle
-nachzubauen wäre ein zu hohes Risiko für einen stillen, schwer zu entdeckenden Korrektheitsfehler
-gewesen (falsch, aber plausibel aussehende Routen statt eines Absturzes).
-
-**Vor der endgültigen Entscheidung zusätzlich geprüft, ob es ein "billigeres" exaktes Verfahren als
-CP-SAT gibt** (Nutzerfrage): Held-Karp, der klassische exakte TSP-DP-Algorithmus (`O(2^n · n²)`,
-Standard-Lehrbuchalgorithmus ohne Zustands-Ambiguität). Korrekt (exakt gegen Brute-Force geprüft),
-aber nur für winzige Batches wirklich günstiger:
-
-| n | Held-Karp | CP-SAT |
-|---|---|---|
-| 8 | 2 ms | 353 ms |
-| 10 | 11 ms | 20 ms |
-| 12 | 65 ms | 29 ms |
-| 16 | 1,7 s | 48 ms |
-| 20 | 42 s | 51 ms |
-| 22 | 3,3 Min | 34 ms |
-
-Ab n≈12 explodiert Held-Karp exponentiell (bei n=24 wären ~6 GB Speicher nötig, bei n=30 ~500 GB),
-während CP-SAT dank Branch-and-Cut praktisch konstant bleibt (auch bei n=40 <0,4s, siehe unten). Da
-Batches hier bis n=60 reichen können, hätte Held-Karp entweder komplett versagt oder eine
-Fallunterscheidung gebraucht - für eine Ersparnis von wenigen Millisekunden bei ohnehin schon
-schnellen kleinen Batches. Kein Wechsel.
-
-**Stattdessen: die bereits im Projekt vorhandene, validierte CP-SAT-Infrastruktur
-(`batch_ortools_solver.py`) wiederverwenden** - nicht für das GESAMTE Zuteilungs+Routing-Modell
-(das skaliert schlecht, siehe CP-SAT-Vergleichslöser-Abschnitt oben), sondern isoliert je einzelnem,
-bereits feststehenden Batch: ein einzelner Hamiltonkreis über Depot + die Positionen dieses Batches
-(`exact_tsp_single_batch`, dieselbe `AddCircuit`-Modellierung wie beim Vergleichslöser, nur ohne
-Zuteilungsvariablen). Das skaliert GUT: n=40 in <0,4s je Batch, nachweislich optimal.
-
-**Als optionale Politur-Stufe integriert** (`apply_exact_tsp_polish`), NICHT automatisch bei jeder
-Einstellungsänderung: ein Worst-Case-Benchmark (Regler-Maximalwerte - 80 Bestellungen, Kapazität 60,
-19 Batches mit bis zu 60 Positionen) brauchte 11,5-17,8s Gesamtzeit für alle Batches zusammen - für
-einen automatischen Schritt auf dem kostenlosen Hosting-Tarif bei jedem Rerun nicht vertretbar.
-Stattdessen ein Button je Strategie-Tab (Greedy-Seed, Zonen-Sweep), mit Zeitlimit-Regler je Batch
-(1-3s), Cooldown (wie beim bestehenden CP-SAT-Tab) und einem harten GESAMT-Zeitbudget
-(`CPSAT_POLISH_TOTAL_BUDGET_S`, 20s) - bei Überschreitung werden verbleibende Batches unverändert mit
-ihrer bisherigen heuristischen Route übernommen, nie schlechter als vorher. Behält je Batch immer die
-kürzere der beiden Routen (analog `_apply_final_safety_net`) - ein Timeout ohne bewiesene Optimalität
-(Status "FEASIBLE"/"UNKNOWN") kann die Route also nie verschlechtern.
-
-**Benchmark: was die Politur tatsächlich bringt.** Auf Nutzeranfrage ("was bringt das Feature
-tatsächlich?") systematisch über 5 Szenariotypen × 3 Seeds × beide Strategien (30 Läufe) gemessen -
-jeweils die ECHTE Produktionspipeline (Konstruktion + Inter-Batch-Suche + Iterated Local Search +
-`_apply_final_safety_net`) vor der Politur, kein Nachbau:
-
-| Szenario | max. Batch-Größe | Ø Verbesserung | Läufe mit Verbesserung | Rechenzeit |
-|---|---|---|---|---|
-| Klein (Standard, 24 Bestellungen) | 15 | 0,30% | 2/6 | 0,1-0,5s |
-| Mittel (40 Bestellungen) | 15 | 0,51% | 5/6 | 0,2-0,3s |
-| Knappe Kapazität (viele kleine Batches) | 10 | 0,06% | 2/6 | 0,2-0,4s |
-| Große Batches (wenige, volle Batches) | 40 | 0,53% | 5/6 | 1,3-3,2s |
-| Worst Case (Regler-Maximalwerte) | 60 | 0,60% | 6/6 | 12-22s |
-
-Über alle 30 Läufe: Mittel 0,40%, Median 0,33%, Max 1,35% - in 67% der Läufe fand die Politur
-überhaupt eine kürzere Route, in den übrigen 33% bestätigte sie nur, dass die Heuristik bereits
-exakt optimal war. Der Nutzen skaliert klar mit der Batch-Größe (konsistent mit der
-Optimalitätslücken-Tabelle oben): bei kleinen, knapp gefüllten Batches (Kapazität 10, n≤10) findet
-die Politur fast nie etwas, bei großen Batches (n=40-60) fast immer eine kleine Verbesserung, aber
-mit spürbar steigender Rechenzeit. Insgesamt liefert das Feature reale, aber typischerweise
-bescheidene Verbesserungen (unter 1% im Mittel) - sein größerer praktischer Wert liegt oft eher
-darin, in einem Drittel bis zwei Dritteln der Fälle *nachweisbar zu bestätigen*, dass die
-bestehende Heuristik bereits optimal ist, statt tatsächlich neue kürzere Routen zu finden. Bei
-kleineren, weniger stark vor-optimierten Zwischenständen (z. B. direkt nach der Konstruktion) oder
-Ausreißer-Batches greift sie deutlicher (siehe Testfall mit bewusst schlechter Startroute unten).
-
-Sechs neue Tests: Korrektheit von `exact_tsp_single_batch` gegen Brute-Force, Einzel-/Leer-Batch-
-Sonderfälle, `apply_exact_tsp_polish` nie schlechter als die Eingabe, tatsächliche Verbesserung einer
-bewusst schlechten Startroute (echte Distanzen verifiziert, nicht angenommen), Einhaltung des
-Gesamt-Zeitbudgets. Live im Browser verifiziert: Button/Regler/Cooldown/Ergebnis-Anzeige in beiden
-Strategie-Tabs, Politur auf einer großen Instanz (3 Batches, bis ~60 Positionen), sowie die
-Ungültig-Erkennung bei geänderten Eingaben seit der letzten Politur.
-
-**Nachtrag:** Auf Nutzeranfrage stand die Politur-Sektion zunächst nur je Strategie-Tab zur
-Verfügung - im zusammengefassten "🎯 Ihr optimierter Batchplan"-Hauptergebnis oben (der jeweils
-bessere von Greedy-Seed/Zonen-Sweep) fehlte sie. Die UI-Sektion (bisher Teil von
-`render_batching_panel`) wurde dafür in eine eigenständige Funktion `render_exact_polish_section`
-ausgelagert (`batch_ui_panel.py`), die sowohl je Tab als auch für das Hauptergebnis aufgerufen wird -
-mit eigenem Session-State-Namespace (`prefix="best"`), unabhängig von den Tab-eigenen Ergebnissen.
-Reiner Refactor der UI-Schicht, keine Logikänderung - alle 89 Tests weiterhin grün, live im Browser
-bestätigt (eigene Metriken/Plot, unabhängig vom Greedy-Seed-Tab-Ergebnis für dieselben Batches).
-
-## Bugfix: CP-SAT-Ergebnisse blieben nach einer Gangabstand-/Ganglänge-Änderung fälschlich "gültig"
-
-Auf Nutzeranfrage ("komplettes Code-Review vom gesamten Programm") gefunden: sowohl der
-CP-SAT-Vergleichs-Tab (`current_key_cpsat` in `app.py`) als auch die neue Politur-Sektion
-(`polish_key` in `render_exact_polish_section`, `batch_ui_panel.py`) nutzen einen Session-State-Key,
-um zu erkennen, ob ein gecachtes Ergebnis noch zu den aktuellen Eingaben passt - beide Keys
-enthielten `aisle_spacing` und `aisle_length` NICHT, obwohl die Distanzmatrix `D` direkt von beiden
-abhängt.
-
-**Konkrete Auswirkung (live reproduziert):** Szenario "Kompaktes Lager" mit CP-SAT gelöst -> 440 m.
-Danach NUR den "Gangabstand (m)"-Regler geändert (3,00 -> 8,00), ohne erneut zu lösen. Vor dem Fix
-blieb der Tab bei unverändertem Status ("Beste gefundene Lösung"/"Nachweislich optimal") stehen,
-zeigte aber eine STILL VERÄNDERTE Distanz (weil `cpsat_total` bei jedem Rerun frisch aus dem
-AKTUELLEN `D` berechnet wird, während die zugrunde liegende Route - `cpsat_routes` - unverändert aus
-der alten, alten Lösung stammt) - ohne jede Warnung, dass das Ergebnis nicht mehr zur aktuellen
-Distanzmatrix passt. Der Fehler pflanzte sich über `cpsat_summary` auch in den "Vergleich"-Tab fort.
-Bei der Politur-Sektion greift dieselbe Lücke, sobald eine Gangabstand-/Ganglänge-Änderung
-zufällig dieselbe Batch-Zuteilung ergibt (plausibel, da die Konstruktion Kandidaten nur relativ
-zueinander gewichtet) - nicht separat live reproduziert, aber derselbe Code-Fehler.
-
-**Fix:** `aisle_spacing`/`aisle_length` in beide Keys aufgenommen (in beiden Funktionen ohnehin schon
-im Scope). Nach dem Fix zeigt derselbe Reproduktionsschritt korrekt "⚠️ Die Eingaben haben sich seit
-dieser Lösung geändert" statt einer stillen Falschangabe - live im Browser bestätigt. Kein neuer
-automatisierter Test: die Testsuite deckt bislang ausschließlich die reinen `batch_*.py`-Funktionen
-ab, nicht app.py's Streamlit-Ablaufcode (kein `AppTest`-Setup vorhanden) - dieselbe Lücke, die den Bug
-ursprünglich unentdeckt ließ. Alle 89 bestehenden Tests bleiben unverändert grün.
-
-**Nachtrag (per `/code-review` auf denselben Fix-Commit angewendet):** Ein automatisierter Review
-fand die Lücke nicht vollständig geschlossen und einen zweiten, verwandten Mangel:
-
-1. `polish_key` enthielt nach dem ersten Fix zwar `aisle_spacing`/`aisle_length`, aber weiterhin NICHT
-   `aisles`/`positions` selbst (anders als `current_key_cpsat`, das beide schon lange hatte). Die
-   Batch-ITEM-INDIZES allein reichen nicht: ein direktes Bearbeiten einer Gang-/Positions-Zelle in der
-   Bestellpositionstabelle ändert `D`, lässt aber die Zeilen-Indizes (und damit die Batch-Zuteilung)
-   unverändert, wenn sich dadurch die Cluster-Zuordnung nicht ändert - derselbe Bug, an einer zweiten,
-   noch offenen Stelle. Fix: `aisles`/`positions` ebenfalls in `polish_key` aufgenommen. Die
-   korrigierte Schlüssel-Logik direkt gegen eine gezielte Positionsänderung geprüft (echte
-   Tupel-Ungleichheit vor/nach, nicht nur angenommen) - die Streamlit-Datentabelle selbst ist ein
-   Canvas-Grid und lässt sich nicht zuverlässig per Browser-Automatisierung bedienen (dieselbe
-   Einschränkung wie beim Batch-Auswahl-Dropdown weiter oben in dieser Session), deshalb auf dieser
-   Ebene statt per vollem UI-Klick-Test verifiziert.
-2. `current_key_cpsat` hatte dieselben vier Feldausdrücke wie `cache_key` (der Haupt-Cache-Key für
-   `_compute_solutions`, ~130 Zeilen weiter oben) von Hand dupliziert, statt ihn wiederzuverwenden -
-   und war dabei bereits selbst abgedriftet: `capacity_mode` fehlte, bislang nur zufällig folgenlos,
-   weil `item_sizes` sich bei einem Moduswechsel ohnehin mit ändert. Fix: `current_key_cpsat` baut jetzt
-   auf `cache_key` auf (`cache_key + (num_batches_cpsat, time_limit_cpsat)`) statt die Felder ein
-   zweites Mal aufzulisten - ein künftiges neues Feld in `cache_key` landet dadurch automatisch auch
-   hier, ohne dass diese Stelle separat gepflegt werden muss. Der ursprüngliche Reproduktionsschritt
-   (CP-SAT lösen, nur Gangabstand ändern) nach dem Refactor erneut live bestätigt.
-
-Zusätzlich ein Zahlendreher in der Benchmark-Tabelle oben behoben: die Zeile "Klein" nannte 4/6 statt
-korrekt 2/6 Läufe mit Verbesserung (die Rohdaten dieser Session zeigen für dieses Szenario nur 2 von 6
-Läufen mit Delta > 0 - die übrigen Zeilen und der 67%-Gesamtdurchschnitt waren bereits korrekt).
-
 ## `/code-review` über die gesamte Codebasis (alle Commits als ein Diff)
 
 Auf Nutzeranfrage ("Kannst du den Befehl auch auf alle Commits anwenden?") den strukturierten
@@ -1217,6 +1007,54 @@ typischen Stundenlohn für Lagerpersonal." 99/99 Tests weiterhin grün (reiner T
 Browser bestätigt (Tooltip rendert korrekt, keine Server-Fehler, Standardszenario weiterhin bei den
 goldenen 883 m).
 
+## Archiv: CP-SAT-Vergleichslöser und -Politur (entfernt)
+
+Auf Nutzerhinweis ("für eine Demo scheint mir das schon ein ziemlicher algorithmischer Overkill zu
+sein") entfernt: der CP-SAT-Vergleichslöser (Tab "🧮 Exakter Solver") und die optionale CP-SAT-
+Politur (Button "🎯 Touren exakt nachschärfen"). Beide waren zusätzliche Komplexität ohne
+Kernnutzen für eine Demo - die eigentliche Aussage der App (Batching + verschachtelte Lokalsuche +
+Iterated Local Search bringt den Löwenanteil des Gewinns) steht auch ohne sie. Entfernt: das
+komplette Modul `batch_ortools_solver.py`, die CP-SAT-Tab-/Politur-UI in `app.py` und
+`batch_ui_panel.py`, die zugehörigen Konstanten (`CPSAT_*`) und der gemeinsame Cooldown-Helfer
+(`cooldown_seconds_remaining`/`cooldown_record`, ausschließlich von diesen beiden Features
+genutzt), 17 Tests, sowie die `ortools`-Abhängigkeit aus `requirements.txt`. 82 der bisherigen 99
+Tests bleiben grün. Live im Browser bestätigt: keine CP-SAT-Reste in Tabs oder Erklärtexten, die
+verbliebenen zwei Strategie-Tabs plus Vergleich funktionieren unverändert, Standardszenario weiter
+bei den goldenen 883 m.
+
+Komprimierte Historie beider Features, bevor sie entfernt wurden (Details standen zuvor in zwei
+eigenen README-Abschnitten sowie einem dedizierten Bugfix-Abschnitt):
+
+**Vergleichslöser:** Ursprünglich mit der OR-Tools-Routing-Bibliothek versucht (dieselbe, die die
+Tourenplanung-Demo nutzt) - scheiterte an zwei Problemen: Standard-Konstruktionsheuristiken
+ignorierten die nötige "gleiches Fahrzeug je Bestellung"-Nebenbedingung (`ROUTING_INVALID`), und ein
+Workaround über `AddPickupAndDelivery` stürzte bei größeren Instanzen mit der Heuristik
+`PATH_CHEAPEST_ARC` reproduzierbar mit einem echten Segfault ab - inakzeptabel für eine öffentliche
+Demo. Ersetzt durch Google CP-SAT (allgemeiner Constraint-Solver statt Routing-Bibliothek):
+Zuordnung + Hamiltonkreis je Batch-Slot in einem Modell, traf das Optimum in allen 12
+Referenzinstanzen mit bekanntem Ergebnis, kein Absturz in allen Stresstests. Ehrlicher Nebenbefund:
+bei realistischen Instanzgrößen war die eigene Heuristik nur ca. 1,7% hinter CP-SAT - exakte
+Verfahren sind bei NP-harten Problemen jenseits einer gewissen Größe nicht automatisch besser als
+gute Heuristiken, wenn die Zeit zum Beweisen der Optimalität fehlt.
+
+**Politur:** Zunächst gemessen, wie groß die tatsächliche 2-opt-Optimalitätslücke für dieses
+Lagermodell überhaupt ist (klein: 0-2% je nach Batch-Größe). Ein passender exakter Algorithmus in
+Polynomialzeit existiert in der Literatur (Ratliff & Rosenthal 1983, später von Roodbergen & de
+Koster auf Zwei-Block-Lager erweitert), ließ sich aber nicht sicher genug nachbauen (die kritische
+Zustands-Übergangstabelle des Originalpapers war trotz mehrerer Recherche-Runden nicht zuverlässig
+extrahierbar, keine verifizierbare Referenzimplementierung auffindbar) - das Risiko eines stillen
+Korrektheitsfehlers war zu hoch. Held-Karp (der klassische exakte TSP-DP-Algorithmus) wurde
+ebenfalls geprüft, skaliert aber ab n≈12 exponentiell und war für die hier vorkommenden Batch-Größen
+(bis n=60) ungeeignet. Stattdessen wurde die bereits vorhandene CP-SAT-Infrastruktur für einzelne,
+bereits feststehende Batches wiederverwendet (n=40 in <0,4s je Batch). Gemessener Nutzen: im Schnitt
+unter 1% kürzere Routen, meist bestätigte die Politur nur, dass die Heuristik bereits optimal war.
+
+**Ein Cache-Key-Bug** (fehlende `aisle_spacing`/`aisle_length`/`aisles`/`positions` in den
+Gültigkeits-Keys beider Features) hatte zwischenzeitlich dazu geführt, dass ein gecachtes CP-SAT-
+Ergebnis nach einer Eingabeänderung fälschlich als "gültig" angezeigt wurde - identifiziert per
+`/code-review`, in zwei Runden vollständig behoben. Mit der Entfernung beider Features ist auch
+diese Fehlerklasse hinfällig.
+
 ## Zwei Kapazitätsarten statt einer fixen
 
 Ursprünglich war Kapazität ausschließlich als Positionsanzahl modelliert (jede Position zählt 1).
@@ -1253,11 +1091,6 @@ je Position, das gegen eine Gesamtkapazität aufsummiert wird.
   eine Kombination (z. B. Kommissionierwagen mit begrenzten Fächern UND einer Volumengrenze
   gleichzeitig) - bewusst auf eine einzige, umschaltbare Nebenbedingung reduziert, analog zur
   Kapazitätsrestriktion der Tourenplanung-Demo.
-- **CP-SAT-Vergleich nur für kleine Instanzen praktikabel.** `CPSAT_MAX_MODEL_SIZE` deaktiviert den
-  Solve-Button bei zu vielen Bestellungen/Positionen - eine bewusste Grenze, keine Notlösung: schon
-  der reine Modellaufbau (nicht die Zeitlimit-gesteuerte Suche selbst) würde jenseits davon mehrere
-  Sekunden bis Minuten dauern. Für größere Instanzen bleiben die eigenen Heuristiken die einzig
-  praktikable Option - was in der Praxis auch für reale Lagergrößen gilt.
 
 ## 1. Lokal ausführen
 
@@ -1294,8 +1127,6 @@ Portfolio-Bereich verlinken - identisches Vorgehen wie bei den anderen Demos.
 - Mehrere Kommissionierer gleichzeitig mit Wegekonflikten (verwandt mit dem Multi-Vehicle-Fall
   der Tourenplanung-Demo, nur mit fester statt freier Tourzuteilung).
 - Kommissionierwellen mit Zeitfenstern (Bestellung muss bis Uhrzeit X versandfertig sein).
-- CP-SAT mit einem "warm start" aus der eigenen Heuristik füttern (`AddHint`) - könnte die Suche
-  bei mittelgroßen Instanzen beschleunigen, ohne die Modellgröße selbst zu verändern.
 
 **Zwei Punkte dieser Liste sind inzwischen nicht mehr offen** (ursprünglich hier als Ideen gelistet,
 dann tatsächlich benchmarkt): Relocate/Swap und 2-opt zu einer verschachtelten Suche zu verzahnen

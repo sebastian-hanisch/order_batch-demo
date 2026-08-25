@@ -80,32 +80,4 @@ ILS_PERTURB_STRENGTH = 2
 # binäre [0,1]-Belohnungen übliche Konstante, siehe README-Benchmark.
 UCB_EXPLORATION_C = 1.4
 
-# CP-SAT-Vergleichslöser (batch_ortools_solver.py): auf Nutzeranfrage
-# ergänzt, um kleine Instanzen exakt (oder nahe-exakt) lösen und mit den
-# eigenen Heuristiken vergleichen zu können. CPSAT_MAX_MODEL_SIZE begrenzt
-# num_batches * (n_items+1)^2 (ungefähre Anzahl Bogen-Variablen des
-# CP-SAT-Modells) - empirisch ermittelt: darüber dauert schon der reine
-# Modellaufbau (nicht die Lösungssuche selbst, die durch das Zeitlimit
-# gedeckelt ist) mehrere Sekunden bis Minuten, siehe README.
-CPSAT_MAX_TIME_LIMIT = 20
-CPSAT_COOLDOWN_BUFFER = 5
-CPSAT_MAX_MODEL_SIZE = 100_000
-
-# Politur-Stufe für ein bereits fertiges Greedy-Seed-/Zonen-Sweep-Ergebnis
-# (auf Nutzeranfrage ergänzt, siehe batch_ortools_solver.py:
-# apply_exact_tsp_polish): löst jede Batch-Route ZUSÄTZLICH exakt mit
-# CP-SAT (ein einzelner Hamiltonkreis je Batch statt des vollen Zuteilungs-
-# +Routing-Modells oben) und behält die kürzere Route. Anders als der
-# obige Vergleichs-Solver skaliert das GUT auf realistische Batch-Größen
-# (n=40 in <0,4s, siehe README) - trotzdem button- statt automatisch
-# ausgelöst: bei vielen großen Batches (Regler-Maximalwerte: bis 19 Batches
-# mit bis zu 60 Positionen) summiert sich das auf 10-20s, was für einen bei
-# JEDER Einstellungsänderung automatisch laufenden Schritt auf dem
-# kostenlosen Hosting-Tarif nicht vertretbar wäre (siehe README).
-# CPSAT_POLISH_TOTAL_BUDGET_S deckelt die GESAMTE Politur hart (nicht nur
-# je Batch) - verbleibende Batches werden bei Überschreitung unverändert
-# mit ihrer bisherigen heuristischen Route übernommen.
-CPSAT_POLISH_TIME_LIMIT_MAX_S = 3
-CPSAT_POLISH_TOTAL_BUDGET_S = 20
-
 FEEDBACK_FILE = "feedback_log.csv"

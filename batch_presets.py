@@ -16,7 +16,6 @@ wird genauso verworfen wie eine Zahl außerhalb von `lo`/`hi`.
 
 import math
 import random
-import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
 
@@ -94,41 +93,6 @@ def randomize_seed():
     st.session_state["force_regen"] = True
 
 
-def cooldown_seconds_remaining(prefix, buffer_s):
-    """Wie viele Sekunden noch bis eine mit `cooldown_record` verzeichnete
-    Aktion für `prefix` erneut ausgelöst werden darf - 0.0, wenn sofort
-    erlaubt. Skaliert mit der zuletzt TATSÄCHLICH gemessenen Laufzeit
-    (nicht einer konfigurierten Obergrenze) plus `buffer_s`.
-
-    Vorher (Code-Review-Fund, 2026-08-23) unabhängig an zwei Stellen
-    dupliziert: im CP-SAT-Vergleichs-Tab (app.py) UND in der Politur-Sektion
-    (batch_ui_panel.py) - mit stillschweigend unterschiedlichem Verhalten:
-    der CP-SAT-Tab nutzte die KONFIGURIERTE Zeitlimit-Obergrenze
-    (`time_limit_cpsat`) statt der tatsächlich gemessenen Laufzeit
-    (`elapsed` wurde zwar berechnet, aber nie für den Cooldown verwendet) -
-    ein Solve, der bereits nach 2s von 10s konfiguriertem Limit optimal
-    beweist, musste trotzdem die volle 10s+Puffer abwarten. Die Politur-
-    Sektion nutzte dagegen schon korrekt die tatsächliche Laufzeit. Dieser
-    gemeinsame Helfer beseitigt beides: die Verdopplung UND die
-    Inkonsistenz - beide Aufrufer nutzen jetzt dieselbe, auf echter Laufzeit
-    basierende Logik."""
-    last_time = st.session_state.get(f"{prefix}_cooldown_last_time", 0.0)
-    last_duration = st.session_state.get(f"{prefix}_cooldown_last_duration_s", 0.0)
-    cooldown = last_duration + buffer_s
-    since_last = time.time() - last_time
-    return max(0.0, cooldown - since_last)
-
-
-def cooldown_record(prefix, duration_s):
-    """Nach einer erfolgreich abgeschlossenen, mit `cooldown_seconds_remaining`
-    abgesicherten Aktion aufrufen: merkt JETZT als Startzeitpunkt der
-    nächsten Cooldown-Zählung sowie `duration_s` (die tatsächlich gemessene
-    Laufzeit DIESER Aktion, nicht ein konfiguriertes Limit) für die nächste
-    Prüfung."""
-    st.session_state[f"{prefix}_cooldown_last_time"] = time.time()
-    st.session_state[f"{prefix}_cooldown_last_duration_s"] = duration_s
-
-
 def load_permalink_settings():
     if "permalink_loaded" in st.session_state:
         return
@@ -167,8 +131,9 @@ def sync_query_params(capacity_mode):
     Permalink-URL. Liest `spec.url_param` aus SETTING_SPECS statt (wie vor
     einem Code-Review-Fund, 2026-08-23) 14 Parameter entgegenzunehmen und
     dieselben URL-Namen als Literale ein zweites Mal von Hand aufzulisten -
-    genau das Muster, das schon `current_key_cpsat`/`polish_key` einmal
-    (fehlende Felder) betraf: load_permalink_settings las `spec.url_param`
+    dasselbe Muster (unabhängig gepflegte Kopien derselben Felder, die
+    auseinanderlaufen), das an anderer Stelle in diesem Projekt schon einmal
+    zu einem Fund geführt hat: load_permalink_settings las `spec.url_param`
     bereits korrekt aus SETTING_SPECS, diese Funktion tat es nicht, sodass
     eine künftige Umbenennung eines url_param nur beim LESEN automatisch
     mitgezogen worden wäre, beim SCHREIBEN aber nicht.
