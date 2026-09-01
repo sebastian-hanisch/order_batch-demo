@@ -27,7 +27,6 @@ from batch_evaluation import (
     route_leg_distances,
     solution_totals,
 )
-from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import (
     _inter_batch_search_dlb,
     _select_ucb_target,
@@ -936,29 +935,6 @@ def test_generate_batch_plan_pdf_produces_valid_pdf_bytes_volume_mode():
     assert isinstance(pdf_bytes, bytes)
     assert pdf_bytes[:4] == b"%PDF"
     assert len(pdf_bytes) > 500
-
-
-# ---------------------------------------------------------------------------
-# Feedback
-# ---------------------------------------------------------------------------
-
-def test_feedback_log_and_count_roundtrip(tmp_path):
-    feedback_file = tmp_path / "feedback_log.csv"
-    assert log_feedback("up", feedback_file=str(feedback_file)) is True
-    assert log_feedback("down", feedback_file=str(feedback_file)) is True
-    up, down = get_feedback_counts(feedback_file=str(feedback_file))
-    assert up == 1
-    assert down == 1
-
-
-def test_feedback_counts_zero_when_file_missing(tmp_path):
-    missing = tmp_path / "does_not_exist.csv"
-    assert get_feedback_counts(feedback_file=str(missing)) == (0, 0)
-
-
-def test_log_feedback_returns_false_on_write_failure(tmp_path):
-    bad_path = tmp_path / "no_such_dir" / "feedback_log.csv"
-    assert log_feedback("up", feedback_file=str(bad_path)) is False
 
 
 # ---------------------------------------------------------------------------

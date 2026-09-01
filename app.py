@@ -31,12 +31,12 @@ Features:
 - Geschäftliche Kennzahlen: Kommissionierzeit, Personalkosten, Durchsatz
   statt abstrakter Distanzwerte.
 - Drei Ein-Klick-Beispielszenarien, Permalink (URL spiegelt die aktuelle
-  Konfiguration), PDF-Batchplan-Export, Feedback-Mechanismus.
+  Konfiguration), PDF-Batchplan-Export.
 
 Lauffähig mit: streamlit run app.py
 
 Code-Struktur: Die eigentliche Logik (Algorithmen, Lagerlayout, PDF-Export,
-Visualisierung, Feedback) liegt in den Modulen batch_*.py neben dieser
+Visualisierung) liegt in den Modulen batch_*.py neben dieser
 Datei. app.py enthält nur den Streamlit-Ablauf (Sidebar, Tabs, Vergleich) -
 dasselbe Strukturprinzip wie in den anderen Demos des Portfolios.
 """
@@ -48,7 +48,6 @@ import streamlit as st
 from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME
 from batch_construction import greedy_seed_batching, singleton_batches, zone_clustering_batching
 from batch_evaluation import batch_capacity_excess, batch_capacity_size, classify_comparison, distance_to_business
-from batch_feedback import get_feedback_counts, log_feedback
 from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
 from batch_presets import apply_preset, bounds, init_session_state_defaults, load_permalink_settings, randomize_seed, sync_query_params
 from batch_ui_panel import generate_batch_plan_pdf_cached, pdf_cache_key, render_batching_panel
@@ -60,8 +59,8 @@ from batch_warehouse import build_distance_matrix, distance_scenario_key
 def _build_distance_matrix_cached(_aisles, _positions, aisle_spacing, aisle_length, distance_key):
     """Cached Wrapper um build_distance_matrix (Code-Review-Fund, 2026-08-23):
     ohne Cache lief die O(n²)-Distanzmatrix-Berechnung bei JEDEM Rerun neu,
-    auch bei Widget-Interaktionen, die sie gar nicht betreffen (z. B.
-    Personalkosten-Regler, Feedback-Buttons) - dasselbe Muster wie bei
+    auch bei Widget-Interaktionen, die sie gar nicht betreffen (z. B. der
+    Personalkosten-Regler) - dasselbe Muster wie bei
     _compute_solutions unten, nur eine Ebene früher: `distance_key` trägt
     explizit alles, wovon die Distanzmatrix abhängt (aisles/positions/
     aisle_spacing/aisle_length), Arrays sind wie dort per führendem
@@ -74,7 +73,7 @@ def _compute_solutions(_orders, _aisles, _positions, capacity, aisle_spacing, ai
     """Beide Batching-Strategien + die Einzelbestellungs-Baseline einmal
     zentral berechnen und cachen. Ohne Cache liefe dieser Block bei JEDEM
     Rerun neu, auch bei Widget-Interaktionen, die die Batches gar nicht
-    betreffen (z. B. Personalkosten-Regler, Feedback-Buttons). Numpy-Arrays
+    betreffen (z. B. der Personalkosten-Regler). Numpy-Arrays
     und das orders-Dict sind per führendem Unterstrich von Streamlits
     Hashing ausgenommen - `cache_key` trägt stattdessen explizit alles, was
     das Ergebnis beeinflusst (inkl. Kapazitätsart und Item-Größen).
@@ -649,34 +648,8 @@ Search.
 
 st.markdown("---")
 
-st.markdown("#### War diese Demo hilfreich für Sie?")
-if st.session_state.get("feedback_given"):
-    vote_text = "👍 positiv" if st.session_state["feedback_given"] == "up" else "👎 negativ"
-    st.success(f"Danke für Ihr Feedback ({vote_text})! 🙏")
-    up_count, down_count = get_feedback_counts()
-    if up_count + down_count > 0:
-        st.caption(f"Bisherige Stimmen: {up_count} 👍 / {down_count} 👎")
-elif st.session_state.get("feedback_error"):
-    st.warning("⚠️ Ihr Feedback konnte nicht gespeichert werden. Bitte versuchen Sie es später erneut.")
-else:
-    fb_col1, fb_col2 = st.columns(2)
-    with fb_col1:
-        if st.button("👍 Ja", key="feedback_up_btn", width="stretch"):
-            if log_feedback("up"):
-                st.session_state["feedback_given"] = "up"
-            else:
-                st.session_state["feedback_error"] = True
-            st.rerun()
-    with fb_col2:
-        if st.button("👎 Nein", key="feedback_down_btn", width="stretch"):
-            if log_feedback("down"):
-                st.session_state["feedback_given"] = "down"
-            else:
-                st.session_state["feedback_error"] = True
-            st.rerun()
-
 st.caption(
-    "Diese Demo ist Teil des Portfolios von Sebastian Hanisch – Operations Research "
-    "und Machine Learning. Interesse an einer maßgeschneiderten Lösung für Ihr "
-    "Unternehmen? [Kontakt aufnehmen](#)"
+    "Diese Demo ist Teil des Portfolios von [Sebastian Hanisch](https://sebastianhanisch.net) – "
+    "Operations Research und Machine Learning. Interesse an einer maßgeschneiderten Lösung für "
+    "Ihr Unternehmen? [Kontakt aufnehmen](https://sebastianhanisch.net/kontakt.html)"
 )

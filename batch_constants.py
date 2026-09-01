@@ -79,5 +79,3 @@ ILS_PERTURB_STRENGTH = 2
 # einpendelt. UCB_EXPLORATION_C=1.4 (~sqrt(2)) ist die in der Literatur für
 # binäre [0,1]-Belohnungen übliche Konstante, siehe README-Benchmark.
 UCB_EXPLORATION_C = 1.4
-
-FEEDBACK_FILE = "feedback_log.csv"
