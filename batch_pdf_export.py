@@ -42,10 +42,10 @@ def generate_batch_plan_pdf(label, batches, final_routes, order_ids_by_item, ais
     pdf.cell(0, 6, f"Anzahl Batches: {len(batches)}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 6, f"Anzahl Bestellungen: {sum(len(b['order_ids']) for b in batches)}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 6, f"Anzahl Positionen: {n_items_total}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, f"Kapazitaetsart: {capacity_mode}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"Kapazitätsart: {capacity_mode}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 6, f"Gesamte Laufdistanz: {total_dist:.0f} m", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, f"Geschaetzte Kommissionierzeit: {total_hours:.1f} h", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, f"Geschaetzte Personalkosten: {total_cost:.0f} EUR (bei {cost_per_hour:.2f} EUR/h)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"Geschätzte Kommissionierzeit: {total_hours:.1f} h", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"Geschätzte Personalkosten: {total_cost:.0f} EUR (bei {cost_per_hour:.2f} EUR/h)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 6, f"Durchsatz: {throughput:.0f} Positionen/h", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
 
