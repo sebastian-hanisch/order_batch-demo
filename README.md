@@ -1094,6 +1094,22 @@ je Position, das gegen eine Gesamtkapazität aufsummiert wird.
   gleichzeitig) - bewusst auf eine einzige, umschaltbare Nebenbedingung reduziert, analog zur
   Kapazitätsrestriktion der Tourenplanung-Demo.
 
+## Verwandte Demos mit demselben mathematischen Modell
+
+Verschiedene Themen im Portfolio teilen (fast) dasselbe Modell. Vor einer neuen Demo-Idee deshalb das
+Modell vergleichen, nicht die Kulisse (Stand 2026-09-23):
+
+- **Tour-Konstruktion + 2-opt (TSP-Familie):** die Routenoptimierung je Batch (2-opt, verschachtelt mit der
+  Zuteilung) steckt bereits in dieser Demo. Eine eigenständige Kommissionierwegeoptimierung (S-Shape, Largest-Gap,
+  Ratliff-Rosenkrantz) wäre eine Dopplung. Verwandt: Tourenplanung und die Trajektorien-Metaheuristiken-Linie. Der
+  Befund "14 Metaheuristik-Varianten, nur ILS + Don't-Look-Bits bleibt" deckt sich mit der `dock_door-demo`
+  (ILS, 3-opt, Tabu Search dort ebenfalls nur ~1 %).
+- **Kommissionierwellen mit Zeitfenstern** (siehe "Anpassungsideen") sind dasselbe Modell wie parallele Maschinen
+  mit Fristen in der `warehouse-transfer-demo` (ATCS, GRASP, CP-SAT), nur mit Kommissionierern als Maschinen.
+- **Mehrere Kommissionierer mit Wegekonflikten** ist das Modell "Ressourcen behindern sich auf gemeinsamer
+  Bahn" wie in der `quaycrane-demo` (Kräne auf einer Schiene, dort 1-D; hier ein Gangnetz).
+- **Ergebnis einer Vorab-Messreihe zu beiden Erweiterungen zusammen (2026-09-23):** Blockieren ist groß (bei 8 Gängen und K=4 Kommissionierern 15 % der Arbeitszeit Warten, doppelte Verspätung) und selbst das exakte Optimum zahlt 29–35 % Aufpreis; es frisst bis zu 57 % des Vorteils einer Fristenregel. Eine einfache Konfliktvermeidung hilft nur bei engen Fristen und auf wenige Gänge konzentrierter Dringlichkeit (2,5–6 %), sonst schadet sie. Formal ein Job-Shop mit Fristen und Obergrenze paralleler Aufträge. Noch nicht gebaut.
+
 ## 1. Lokal ausführen
 
 ```bash
