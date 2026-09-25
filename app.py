@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME
+from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME, EPS
 from batch_construction import greedy_seed_batching, singleton_batches, zone_clustering_batching
 from batch_evaluation import batch_capacity_excess, batch_capacity_size, classify_comparison, distance_to_business
 from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
@@ -324,7 +324,7 @@ for idx, oid in enumerate(order_id_col):
 n_orders_eff = len(orders)
 
 max_order_size = max(batch_capacity_size(items, item_sizes) for items in orders.values())
-if max_order_size > capacity:
+if max_order_size > capacity + EPS:
     unit = "Positionen" if capacity_mode == CAPACITY_MODE_POSITIONS else "l"
     st.warning(
         f"⚠️ Mindestens eine Bestellung hat {max_order_size:.1f} {unit} und übersteigt damit die "
@@ -362,8 +362,8 @@ naive_final_routes = [h[-1][0] for h in naive_histories]
 naive_total_dist = sum(h[-1][1] for h in naive_histories)
 
 n_items_total = len(aisles)
-naive_hours, naive_cost, naive_throughput = distance_to_business(naive_total_dist, n_items_total, len(naive_batches), walking_speed, pick_time, cost_per_hour)
-best_hours, best_cost, best_throughput = distance_to_business(best_own["total_distance"], n_items_total, len(best_own["batches"]), walking_speed, pick_time, cost_per_hour)
+naive_hours, naive_cost, naive_throughput = distance_to_business(naive_total_dist, n_items_total, walking_speed, pick_time, cost_per_hour)
+best_hours, best_cost, best_throughput = distance_to_business(best_own["total_distance"], n_items_total, walking_speed, pick_time, cost_per_hour)
 dist_saved_pct = 0.0 if naive_total_dist <= 0 else 100 * (naive_total_dist - best_own["total_distance"]) / naive_total_dist
 hours_saved = naive_hours - best_hours
 cost_saved = naive_cost - best_cost
@@ -469,8 +469,8 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
             st.markdown(f"➡️ **{winner['label']}** liegt hier vorn (kürzeste Laufdistanz).")
             loser = classification["worst"]
             if loser["total_distance"] > 0:
-                w_hours, w_cost, _ = distance_to_business(winner["total_distance"], n_items_total, winner["n_batches"], walking_speed, pick_time, cost_per_hour)
-                l_hours, l_cost, _ = distance_to_business(loser["total_distance"], n_items_total, loser["n_batches"], walking_speed, pick_time, cost_per_hour)
+                w_hours, w_cost, _ = distance_to_business(winner["total_distance"], n_items_total, walking_speed, pick_time, cost_per_hour)
+                l_hours, l_cost, _ = distance_to_business(loser["total_distance"], n_items_total, walking_speed, pick_time, cost_per_hour)
                 if l_cost - w_cost > 0.5:
                     st.markdown(
                         f"💶 Im Vergleich zu '{loser['label']}' spart '{winner['label']}' hier ca. "
