@@ -524,7 +524,7 @@ dadurch bevorzugt im selben Batch, was Gangwechsel reduziert.
 offen: welche Bestellungen zusammen in einem Batch landen, UND in welcher Reihenfolge ein Batch
 seine Positionen abläuft (ein eigenständiges kleines Rundreiseproblem je Batch). Ein Benchmark
 gegen das echte Optimum (Vollenumeration auf winzigen Instanzen) zeigt, dass Greedy-Seed/Zonen-Sweep
-allein im Schnitt noch 8-10% zurückliegen: eine Inter-Batch-Suche verschiebt
+allein im Schnitt noch 8,7% zurückliegen: eine Inter-Batch-Suche verschiebt
 (Relocate) oder tauscht (Swap) Bestellungen zwischen Batches, wenn das die
 Gesamtdistanz senkt - VERSCHACHTELT mit 2-opt-Zügen auf den einzelnen Batch-Routen, statt beides
 nacheinander abzuarbeiten. Ein Batch gilt erst dann als "fertig", wenn WEDER eine bessere Zuteilung
@@ -589,16 +589,22 @@ minimiert:
         r"+ \sum_{t=1}^{|R_v|-1} d(R_v(t),\,R_v(t+1)) + d(R_v(|R_v|),\,0) \,\Big]"
     )
     st.latex(
-        r"\text{u. d. N.} \quad \bigcup_{v=1}^{k} B_v = O, \qquad "
+        r"\text{u. d. N.} \quad \bigcup_{v=1}^{k} B_v = O, \quad "
+        r"B_u \cap B_v = \emptyset \;\; (u \neq v), \qquad "
         r"\sum_{o \in B_v} \sum_{i \in P_o} s_i \leq Q \;\;\forall v"
     )
     st.markdown(
         r"""
 Das Problem zerfällt in zwei gekoppelte Teilentscheidungen: **welche** Bestellungen in denselben
 Batch kommen (eine Partitionierung unter einer Kapazitätsnebenbedingung - strukturell verwandt
-mit Bin Packing, das bereits für sich NP-schwer ist, mit $s_i$ als Item-Gewicht im Bin-Packing-
-Sinn), und **in welcher Reihenfolge** die Positionen eines Batches abgelaufen werden (ein
-Traveling-Salesman-Problem je Batch, ebenfalls NP-schwer). Beide Entscheidungen beeinflussen sich
+mit Bin Packing, das bereits für sich NP-schwer ist; die Items sind hier die Bestellungen mit
+dem Gewicht $\sum_{i \in P_o} s_i$), und **in welcher Reihenfolge** die Positionen eines
+Batches abgelaufen werden (ein Rundreiseproblem je Batch). Letzteres ist im Allgemeinen ein
+Traveling-Salesman-Problem; für das hier verwendete Layout mit parallelen Gängen und zwei
+Quergassen (ein Block) gibt es allerdings einen polynomiellen exakten Algorithmus (Ratliff &
+Rosenthal 1983). Die Demo verwendet ihn nicht, sondern Nearest-Neighbor mit 2-opt. Die
+Schwierigkeit des Gesamtproblems kommt aus der Batch-Bildung (Gademann & van de Velde 2005).
+Beide Entscheidungen beeinflussen sich
 gegenseitig: welche Gruppierung eine kurze Route ermöglicht, hängt von den Positionen der
 beteiligten Bestellungen ab - eine gemeinsame exakte Lösung ist bei realistischen
 Instanzgrößen praktisch nicht mehr berechenbar. Die erste Gruppierung entsteht deshalb konstruktiv
@@ -617,7 +623,8 @@ Batch-Distanz senkt:
 **Inter-Batch-Nachbarschaft:** Ergänzt um Relocate- und Swap-Nachbarschaft zwischen zwei Batches
 $u, v$: Relocate verschiebt eine Bestellung $o \in B_u$ nach $B_v$ (zulässig, wenn
 $\sum_{i \in P_o} s_i + \sum_{o' \in B_v} \sum_{i \in P_{o'}} s_i \leq Q$ gilt), Swap tauscht je
-eine Bestellung $o_u \in B_u$ und $o_v \in B_v$. Ein Zug wird ausgeführt, wenn er die Summe der
+eine Bestellung $o_u \in B_u$ und $o_v \in B_v$ (zulässig, wenn die Kapazität $Q$ in beiden
+Batches nach dem Tausch eingehalten wird). Ein Zug wird ausgeführt, wenn er die Summe der
 beiden betroffenen Batch-Distanzen senkt - aus Performance-Gründen bewertet anhand einer
 Cheapest-Insertion-Einfügung in die bestehende Route statt eines vollen Neu-Routings je Kandidat
 (Details und die Benchmark-Zahlen dazu in `batch_local_search.py` und im README). Diese
@@ -630,13 +637,14 @@ Inter-Batch-Nachbarschaft noch einen verbessernden Zug findet. Der Grund: würde
 2-opt-Optimum routen und danach unangetastet die Inter-Batch-Suche starten (wie ursprünglich
 umgesetzt), würden Zuteilungs-Kandidatenzüge anhand noch nicht routenoptimierter Distanzen bewertet
 - das kann zu suboptimalen Zuteilungsentscheidungen führen (empirisch bestätigt, siehe README). Das
-Ergebnis ist ein **lokales** Optimum bezüglich der VEREINIGTEN Nachbarschaftsstruktur, weiterhin
-ohne Garantie für die global beste Lösung.
+Ergebnis ist ein **lokales** Optimum bezüglich der VEREINIGTEN Nachbarschaftsstruktur (mit der
+Cheapest-Insertion-Bewertung der Zuteilungszüge und einem Sicherheitslimit von
+`LOCAL_SEARCH_MAX_MOVES` Zügen), weiterhin ohne Garantie für die global beste Lösung.
 
 **Grenze reiner Lokalsuche:** Auch die vereinigte Nachbarschaft stoppt beim ERSTEN lokalen Optimum
 - es gibt keinen Mechanismus, es wieder zu verlassen, selbst wenn ein besseres lokales Optimum nur
 einen ungünstigen Zwischenschritt entfernt läge. Iterated Local Search adressiert genau das: eine
-Störung $p$ (ein paar zufällige, zulässige Relocates) erzeugt aus einer Lösung $\pi$ eine
+Störung $p$ (ein paar zulässige Relocates: zufällige Bestellung, Ziel-Batch per UCB1 gewählt) erzeugt aus einer Lösung $\pi$ eine
 benachbarte Startlösung $p(\pi)$, auf die erneut die verschachtelte Suche angewendet wird.
 Wiederholt für ein Zeitbudget statt eine feste Anzahl Wiederholungen, das beste je gefundene
 $\pi^*$ wird behalten - eine einfache, aber in der Metaheuristik-Literatur gut etablierte Form der
