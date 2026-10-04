@@ -803,7 +803,7 @@ def test_capacity_summary_text_volume_mode_shows_both_count_and_volume():
 
 def test_distance_to_business_pick_time_dominates_when_distance_is_zero():
     hours, cost, throughput = distance_to_business(
-        total_distance_m=0.0, n_items=10, n_batches=2, walking_speed_mps=1.3, pick_time_s=18.0, cost_per_hour=28.0,
+        total_distance_m=0.0, n_items=10, walking_speed_mps=1.3, pick_time_s=18.0, cost_per_hour=28.0,
     )
     assert hours == pytest.approx(10 * 18.0 / 3600.0)
     assert cost == pytest.approx(hours * 28.0)
@@ -811,7 +811,7 @@ def test_distance_to_business_pick_time_dominates_when_distance_is_zero():
 
 
 def test_distance_to_business_zero_items_zero_hours_zero_throughput():
-    hours, cost, throughput = distance_to_business(0.0, 0, 0, 1.3, 18.0, 28.0)
+    hours, cost, throughput = distance_to_business(0.0, 0, 1.3, 18.0, 28.0)
     assert hours == 0.0
     assert cost == 0.0
     assert throughput == 0.0

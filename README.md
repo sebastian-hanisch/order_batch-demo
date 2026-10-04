@@ -74,9 +74,12 @@ Ergebnis zuerst ("Ihr optimierter Batchplan"), Methodenvergleich sekundär im Ex
 
 Order Batching zerfällt in zwei gekoppelte Teilentscheidungen (siehe Expander "📐 Mathematische
 Formulierung" in der App): welche Bestellungen in denselben Batch kommen, und in welcher
-Reihenfolge die Positionen eines Batches abgelaufen werden. Beide Entscheidungen sind für sich
-genommen bereits NP-schwer (verwandt mit Bin Packing bzw. Traveling Salesman), eine gemeinsame
-exakte Lösung ist bei realistischen Instanzgrößen praktisch nicht mehr berechenbar. Greedy-Seed
+Reihenfolge die Positionen eines Batches abgelaufen werden. Die Batch-Bildung ist NP-schwer
+(verwandt mit Bin Packing, Gademann & van de Velde 2005); das Routing je Batch ist im Allgemeinen
+ein Traveling-Salesman-Problem, im hier verwendeten Ein-Block-Layout (parallele Gänge, zwei
+Quergassen) aber polynomiell exakt lösbar (Ratliff & Rosenthal 1983) - die Demo nutzt dafür
+bewusst Nearest-Neighbor + 2-opt. Eine gemeinsame exakte Lösung ist bei realistischen
+Instanzgrößen praktisch nicht mehr berechenbar. Greedy-Seed
 und Zonen-Sweep verfolgen zwei unterschiedliche Grundprinzipien für die erste Teilentscheidung
 (Ähnlichkeit zum bisherigen Batch-Inhalt vs. geografische Zonierung) - welches besser abschneidet,
 hängt vom Szenario ab (siehe die Ein-Klick-Beispielszenarien), weshalb beide direkt
@@ -367,8 +370,9 @@ Ebenfalls durchweg schlechter - und deutlicher als alle vier vorherigen Kandidat
 dass das nur am (gegenüber ILS knapperen) Zeitbudget lag, wurde beim größten Szenario das Zeitbudget
 verzehnfacht (15s statt 1,5s): Tabu Search kam von 15 auf 148 Iterationen, der Rückstand wurde aber
 GRÖSSER statt kleiner (**−10,14%** statt −6,66%) - kein Zeitproblem, sondern ein struktureller
-Mismatch. Grund: die vollständige Nachbarschaftsauswertung pro Iteration ist O(Batches² ×
-Bestellungen²) - von Natur aus teuer. Die bestehende DLB-Suche nimmt dagegen den ersten
+Mismatch. Grund: die vollständige Nachbarschaftsauswertung pro Iteration umfasst bis zu m²/2
+Swap-Paare (m = Bestellungen insgesamt) plus die Relocate-Kandidaten, jeweils mit
+O(k)-Cheapest-Insertion-Bewertung - von Natur aus teuer. Die bestehende DLB-Suche nimmt dagegen den ersten
 verbessernden Zug und bleibt dank Warm-Start auf die tatsächlich betroffenen Batches fokussiert -
 dadurch passen um Größenordnungen mehr Iterationen ins gleiche Budget, was die fehlende
 "bester Zug"-Cleverness von Tabu Search mehr als ausgleicht. Nicht übernommen.
@@ -482,8 +486,8 @@ behandelt werden, nicht als verlässliche Punktschätzung.
 
 Auf gezielte Nachfrage nach neuerer, problem-spezifischer Literatur (statt allgemeiner
 Metaheuristik-Paradigmen) recherchiert: **Variable Neighborhood Search** (VNS) ist mehrfach explizit
-für das Order Batching Problem untersucht worden (u. a. Scholz et al., "Variable Neighborhood
-Search strategies for the Order Batching Problem", *European Journal of Operational Research*).
+für das Order Batching Problem untersucht worden (u. a. Menéndez et al. 2017, "Variable Neighborhood
+Search strategies for the Order Batching Problem", *Computers & Operations Research* 78).
 Kern: eine GEORDNETE FOLGE strukturell unterschiedlicher Störungs-Nachbarschaften statt nur
 zunehmender Störstärke (der Unterschied zur bereits gescheiterten "Adaptiven Störstärke") - bei
 Stagnation wird zur nächsten, andersartigen Nachbarschaft eskaliert, bei jeder Verbesserung sofort
@@ -1046,8 +1050,9 @@ Koster auf Zwei-Block-Lager erweitert), ließ sich aber nicht sicher genug nachb
 Zustands-Übergangstabelle des Originalpapers war trotz mehrerer Recherche-Runden nicht zuverlässig
 extrahierbar, keine verifizierbare Referenzimplementierung auffindbar) - das Risiko eines stillen
 Korrektheitsfehlers war zu hoch. Held-Karp (der klassische exakte TSP-DP-Algorithmus) wurde
-ebenfalls geprüft, skaliert aber ab n≈12 exponentiell und war für die hier vorkommenden Batch-Größen
-(bis n=60) ungeeignet. Stattdessen wurde die bereits vorhandene CP-SAT-Infrastruktur für einzelne,
+ebenfalls geprüft: Laufzeit Θ(n²·2ⁿ) (in reinem Python gemessen: n=12 ca. 0,04 s, n=16 ca. 1,6 s,
+je weiterem Knoten ca. ×2,4), also ab etwa n≈18-20 unpraktikabel und für die hier vorkommenden
+Batch-Größen (bis n=60) ungeeignet. Stattdessen wurde die bereits vorhandene CP-SAT-Infrastruktur für einzelne,
 bereits feststehende Batches wiederverwendet (n=40 in <0,4s je Batch). Gemessener Nutzen: im Schnitt
 unter 1% kürzere Routen, meist bestätigte die Politur nur, dass die Heuristik bereits optimal war.
 
@@ -1093,6 +1098,22 @@ je Position, das gegen eine Gesamtkapazität aufsummiert wird.
   eine Kombination (z. B. Kommissionierwagen mit begrenzten Fächern UND einer Volumengrenze
   gleichzeitig) - bewusst auf eine einzige, umschaltbare Nebenbedingung reduziert, analog zur
   Kapazitätsrestriktion der Tourenplanung-Demo.
+
+## Verwandte Demos mit demselben mathematischen Modell
+
+Verschiedene Themen im Portfolio teilen (fast) dasselbe Modell. Vor einer neuen Demo-Idee deshalb das
+Modell vergleichen, nicht die Kulisse (Stand 2026-09-23):
+
+- **Tour-Konstruktion + 2-opt (TSP-Familie):** die Routenoptimierung je Batch (2-opt, verschachtelt mit der
+  Zuteilung) steckt bereits in dieser Demo. Eine eigenständige Kommissionierwegeoptimierung (S-Shape, Largest-Gap,
+  Ratliff-Rosenkrantz) wäre eine Dopplung. Verwandt: Tourenplanung und die Trajektorien-Metaheuristiken-Linie. Der
+  Befund "14 Metaheuristik-Varianten, nur ILS + Don't-Look-Bits bleibt" deckt sich mit der `dock_door-demo`
+  (ILS, 3-opt, Tabu Search dort ebenfalls nur ~1 %).
+- **Kommissionierwellen mit Zeitfenstern** (siehe "Anpassungsideen") sind dasselbe Modell wie parallele Maschinen
+  mit Fristen in der `warehouse-transfer-demo` (ATCS, GRASP, CP-SAT), nur mit Kommissionierern als Maschinen.
+- **Mehrere Kommissionierer mit Wegekonflikten** ist das Modell "Ressourcen behindern sich auf gemeinsamer
+  Bahn" wie in der `quaycrane-demo` (Kräne auf einer Schiene, dort 1-D; hier ein Gangnetz).
+- **Ergebnis einer Vorab-Messreihe zu beiden Erweiterungen zusammen (2026-09-23):** Blockieren ist groß (bei 8 Gängen und K=4 Kommissionierern 15 % der Arbeitszeit Warten, doppelte Verspätung) und selbst das exakte Optimum zahlt 29–35 % Aufpreis; es frisst bis zu 57 % des Vorteils einer Fristenregel. Eine einfache Konfliktvermeidung hilft nur bei engen Fristen und auf wenige Gänge konzentrierter Dringlichkeit (2,5–6 %), sonst schadet sie. Formal ein Job-Shop mit Fristen und Obergrenze paralleler Aufträge. Noch nicht gebaut.
 
 ## 1. Lokal ausführen
 

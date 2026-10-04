@@ -21,6 +21,7 @@ import time
 import numpy as np
 import streamlit as st
 
+from batch_constants import EPS
 from batch_evaluation import batch_capacity_size, capacity_summary_text, distance_to_business, route_leg_distances
 from batch_pdf_export import generate_batch_plan_pdf
 from batch_visualization import build_batch_detail_figure, build_warehouse_overview_figure
@@ -63,9 +64,9 @@ def render_batching_panel(prefix, label, batches, histories, ib_history, order_i
     n_batches = len(batches)
     cap_used = [batch_capacity_size(b["items"], item_sizes) for b in batches]
     avg_util_pct = 100 * float(np.mean([u / capacity for u in cap_used])) if n_batches and capacity > 0 else 0.0
-    overloaded = [i for i, u in enumerate(cap_used) if u > capacity]
+    overloaded = [i for i, u in enumerate(cap_used) if u > capacity + EPS]
 
-    total_hours, total_cost, throughput = distance_to_business(total_dist, n_items_total, n_batches, walking_speed_mps, pick_time_s, cost_per_hour)
+    total_hours, total_cost, throughput = distance_to_business(total_dist, n_items_total, walking_speed_mps, pick_time_s, cost_per_hour)
 
     if overloaded:
         st.warning(
