@@ -342,7 +342,7 @@ results = _compute_solutions(orders, aisles, positions, capacity, aisle_spacing,
 
 METHODS = [
     ("greedy", "Greedy-Seed-Batching", "🌱 Greedy-Seed", "Startet jeden Batch mit der größten noch unverteilten Bestellung und füllt ihn greedy mit den Bestellungen auf, deren Positionen dem Batch-Schwerpunkt am nächsten liegen."),
-    ("zone", "Zonen-Sweep-Batching", "🧭 Zonen-Sweep", "Sortiert Bestellungen nach ihrem Gang-Schwerpunkt und packt sie in dieser Reihenfolge First-Fit in Batches - Bestellungen im selben Lagerbereich landen bevorzugt zusammen."),
+    ("zone", "Zonen-Sweep-Batching", "🧭 Zonen-Sweep", "Sortiert Bestellungen nach ihrem Gang-Schwerpunkt; jeder neue Batch startet an der nächsten unverteilten Stelle dieser Sortierung und wird mit den räumlich nächstgelegenen noch passenden Bestellungen aufgefüllt - Bestellungen im selben Lagerbereich landen bevorzugt zusammen."),
 ]
 
 own_candidates = []
@@ -516,9 +516,11 @@ größten noch unverteilten Bestellung und füllt ihn greedy mit den Bestellunge
 Positionen dem bisherigen Batch-Schwerpunkt am nächsten liegen, bis die Kapazität erreicht ist.
 
 **Zonen-Sweep-Batching:** Sortiert alle Bestellungen nach ihrem Gang-Schwerpunkt (analog zum
-Sweep-Algorithmus der Tourenplanung-Demo, nur entlang der Gänge statt um ein Depot) und packt
-sie in dieser Reihenfolge First-Fit in Batches. Bestellungen im selben Lagerbereich landen
-dadurch bevorzugt im selben Batch, was Gangwechsel reduziert.
+Sweep-Algorithmus der Tourenplanung-Demo, nur entlang der Gänge statt um ein Depot). Jeder neue
+Batch startet mit der nächsten noch unverteilten Bestellung in dieser Sortierung und wird danach -
+wie bei Greedy-Seed - mit den räumlich nächstgelegenen noch passenden Bestellungen aufgefüllt.
+Bestellungen im selben Lagerbereich landen dadurch bevorzugt im selben Batch, was Gangwechsel
+reduziert.
 
 **Verschachtelte Zuteilungs- und Routen-Suche:** Nach der ersten Batch-Bildung ist noch zweierlei
 offen: welche Bestellungen zusammen in einem Batch landen, UND in welcher Reihenfolge ein Batch
@@ -650,6 +652,6 @@ st.markdown("---")
 
 st.caption(
     "Diese Demo ist Teil des Portfolios von [Sebastian Hanisch](https://sebastianhanisch.net) – "
-    "Operations Research und Machine Learning. Interesse an einer maßgeschneiderten Lösung für "
-    "Ihr Unternehmen? [Kontakt aufnehmen](https://sebastianhanisch.net/kontakt.html)"
+    "Operations Research und Machine Learning ([Über mich](https://sebastianhanisch.net/ueber-mich.html)). "
+    "Mehr zum Thema: [Lagerlogistik optimieren](https://sebastianhanisch.net/lagerlogistik-optimierung.html)."
 )

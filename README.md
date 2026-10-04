@@ -79,7 +79,7 @@ genommen bereits NP-schwer (verwandt mit Bin Packing bzw. Traveling Salesman), e
 exakte Lösung ist bei realistischen Instanzgrößen praktisch nicht mehr berechenbar. Greedy-Seed
 und Zonen-Sweep verfolgen zwei unterschiedliche Grundprinzipien für die erste Teilentscheidung
 (Ähnlichkeit zum bisherigen Batch-Inhalt vs. geografische Zonierung) - welches besser abschneidet,
-hängt vom Szenario ab (siehe Beispielszenario "Weitläufiges Lager"), weshalb beide direkt
+hängt vom Szenario ab (siehe die Ein-Klick-Beispielszenarien), weshalb beide direkt
 vergleichbar angeboten werden statt sich auf eine einzige Strategie festzulegen.
 
 ## Benchmark: Zonen-Sweep war schwächer als gedacht - und ist jetzt nachgebessert
@@ -1140,4 +1140,4 @@ verzehnfachten Zeitbudget noch schlechter (siehe "Benchmark: vierzehn Metaheuris
 geprüft" oben für alle 14 getesteten Varianten inkl. ALNS).
 ---
 
-Teil des [Operations-Research-Demo-Portfolios](https://sebastianhanisch.net/demos.html) von [Sebastian Hanisch](https://sebastianhanisch.net) — Operations Research und Machine Learning. Interesse an einer maßgeschneiderten Lösung? [Kontakt aufnehmen](https://sebastianhanisch.net/kontakt.html).
+Diese Demo ist Teil des Portfolios von [Sebastian Hanisch](https://sebastianhanisch.net) – Operations Research und Machine Learning ([Über mich](https://sebastianhanisch.net/ueber-mich.html)). Mehr zum Thema: [Lagerlogistik optimieren](https://sebastianhanisch.net/lagerlogistik-optimierung.html).
