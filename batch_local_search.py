@@ -15,7 +15,7 @@ Drei Ebenen lokaler Suche:
    noch etwas verbessert. Auf Nutzeranfrage ergänzt, nachdem ein Benchmark
    gegen das echte Optimum (Vollenumeration auf winzigen Instanzen) zeigte,
    dass Greedy-Seed/Zonen-Sweep trotz eigener 2-opt-Politur im Schnitt noch
-   8-10% hinter dem Optimum zurückliegen (Details siehe README) - die
+   8,7% hinter dem Optimum zurückliegen (Details siehe README) - die
    Batch-ZUTEILUNG selbst blieb bislang nach der Konstruktion unangetastet.
    Mit Inter-Batch-Suche sank der Abstand zum Optimum auf 0,1%, auf
    realistischen Instanzgrößen ergaben sich 5-20% kürzere Gesamtdistanz

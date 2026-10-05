@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME
+from batch_constants import CAPACITY_MODE_POSITIONS, CAPACITY_MODE_VOLUME, EPS
 from batch_construction import greedy_seed_batching, singleton_batches, zone_clustering_batching
 from batch_evaluation import batch_capacity_excess, batch_capacity_size, classify_comparison, distance_to_business
 from batch_local_search import iterated_local_search_history, reconcile_per_batch_histories, route_batch
@@ -324,7 +324,7 @@ for idx, oid in enumerate(order_id_col):
 n_orders_eff = len(orders)
 
 max_order_size = max(batch_capacity_size(items, item_sizes) for items in orders.values())
-if max_order_size > capacity:
+if max_order_size > capacity + EPS:
     unit = "Positionen" if capacity_mode == CAPACITY_MODE_POSITIONS else "l"
     st.warning(
         f"⚠️ Mindestens eine Bestellung hat {max_order_size:.1f} {unit} und übersteigt damit die "
@@ -342,7 +342,7 @@ results = _compute_solutions(orders, aisles, positions, capacity, aisle_spacing,
 
 METHODS = [
     ("greedy", "Greedy-Seed-Batching", "🌱 Greedy-Seed", "Startet jeden Batch mit der größten noch unverteilten Bestellung und füllt ihn greedy mit den Bestellungen auf, deren Positionen dem Batch-Schwerpunkt am nächsten liegen."),
-    ("zone", "Zonen-Sweep-Batching", "🧭 Zonen-Sweep", "Sortiert Bestellungen nach ihrem Gang-Schwerpunkt und packt sie in dieser Reihenfolge First-Fit in Batches - Bestellungen im selben Lagerbereich landen bevorzugt zusammen."),
+    ("zone", "Zonen-Sweep-Batching", "🧭 Zonen-Sweep", "Sortiert Bestellungen nach ihrem Gang-Schwerpunkt; jeder neue Batch startet an der nächsten unverteilten Stelle dieser Sortierung und wird mit den räumlich nächstgelegenen noch passenden Bestellungen aufgefüllt - Bestellungen im selben Lagerbereich landen bevorzugt zusammen."),
 ]
 
 own_candidates = []
@@ -362,8 +362,8 @@ naive_final_routes = [h[-1][0] for h in naive_histories]
 naive_total_dist = sum(h[-1][1] for h in naive_histories)
 
 n_items_total = len(aisles)
-naive_hours, naive_cost, naive_throughput = distance_to_business(naive_total_dist, n_items_total, len(naive_batches), walking_speed, pick_time, cost_per_hour)
-best_hours, best_cost, best_throughput = distance_to_business(best_own["total_distance"], n_items_total, len(best_own["batches"]), walking_speed, pick_time, cost_per_hour)
+naive_hours, naive_cost, naive_throughput = distance_to_business(naive_total_dist, n_items_total, walking_speed, pick_time, cost_per_hour)
+best_hours, best_cost, best_throughput = distance_to_business(best_own["total_distance"], n_items_total, walking_speed, pick_time, cost_per_hour)
 dist_saved_pct = 0.0 if naive_total_dist <= 0 else 100 * (naive_total_dist - best_own["total_distance"]) / naive_total_dist
 hours_saved = naive_hours - best_hours
 cost_saved = naive_cost - best_cost
@@ -469,8 +469,8 @@ with st.expander("🔧 Wie wir das erreichen – vollständiger Strategieverglei
             st.markdown(f"➡️ **{winner['label']}** liegt hier vorn (kürzeste Laufdistanz).")
             loser = classification["worst"]
             if loser["total_distance"] > 0:
-                w_hours, w_cost, _ = distance_to_business(winner["total_distance"], n_items_total, winner["n_batches"], walking_speed, pick_time, cost_per_hour)
-                l_hours, l_cost, _ = distance_to_business(loser["total_distance"], n_items_total, loser["n_batches"], walking_speed, pick_time, cost_per_hour)
+                w_hours, w_cost, _ = distance_to_business(winner["total_distance"], n_items_total, walking_speed, pick_time, cost_per_hour)
+                l_hours, l_cost, _ = distance_to_business(loser["total_distance"], n_items_total, walking_speed, pick_time, cost_per_hour)
                 if l_cost - w_cost > 0.5:
                     st.markdown(
                         f"💶 Im Vergleich zu '{loser['label']}' spart '{winner['label']}' hier ca. "
@@ -516,15 +516,17 @@ größten noch unverteilten Bestellung und füllt ihn greedy mit den Bestellunge
 Positionen dem bisherigen Batch-Schwerpunkt am nächsten liegen, bis die Kapazität erreicht ist.
 
 **Zonen-Sweep-Batching:** Sortiert alle Bestellungen nach ihrem Gang-Schwerpunkt (analog zum
-Sweep-Algorithmus der Tourenplanung-Demo, nur entlang der Gänge statt um ein Depot) und packt
-sie in dieser Reihenfolge First-Fit in Batches. Bestellungen im selben Lagerbereich landen
-dadurch bevorzugt im selben Batch, was Gangwechsel reduziert.
+Sweep-Algorithmus der Tourenplanung-Demo, nur entlang der Gänge statt um ein Depot). Jeder neue
+Batch startet mit der nächsten noch unverteilten Bestellung in dieser Sortierung und wird danach -
+wie bei Greedy-Seed - mit den räumlich nächstgelegenen noch passenden Bestellungen aufgefüllt.
+Bestellungen im selben Lagerbereich landen dadurch bevorzugt im selben Batch, was Gangwechsel
+reduziert.
 
 **Verschachtelte Zuteilungs- und Routen-Suche:** Nach der ersten Batch-Bildung ist noch zweierlei
 offen: welche Bestellungen zusammen in einem Batch landen, UND in welcher Reihenfolge ein Batch
 seine Positionen abläuft (ein eigenständiges kleines Rundreiseproblem je Batch). Ein Benchmark
 gegen das echte Optimum (Vollenumeration auf winzigen Instanzen) zeigt, dass Greedy-Seed/Zonen-Sweep
-allein im Schnitt noch 8-10% zurückliegen: eine Inter-Batch-Suche verschiebt
+allein im Schnitt noch 8,7% zurückliegen: eine Inter-Batch-Suche verschiebt
 (Relocate) oder tauscht (Swap) Bestellungen zwischen Batches, wenn das die
 Gesamtdistanz senkt - VERSCHACHTELT mit 2-opt-Zügen auf den einzelnen Batch-Routen, statt beides
 nacheinander abzuarbeiten. Ein Batch gilt erst dann als "fertig", wenn WEDER eine bessere Zuteilung
@@ -589,16 +591,22 @@ minimiert:
         r"+ \sum_{t=1}^{|R_v|-1} d(R_v(t),\,R_v(t+1)) + d(R_v(|R_v|),\,0) \,\Big]"
     )
     st.latex(
-        r"\text{u. d. N.} \quad \bigcup_{v=1}^{k} B_v = O, \qquad "
+        r"\text{u. d. N.} \quad \bigcup_{v=1}^{k} B_v = O, \quad "
+        r"B_u \cap B_v = \emptyset \;\; (u \neq v), \qquad "
         r"\sum_{o \in B_v} \sum_{i \in P_o} s_i \leq Q \;\;\forall v"
     )
     st.markdown(
         r"""
 Das Problem zerfällt in zwei gekoppelte Teilentscheidungen: **welche** Bestellungen in denselben
 Batch kommen (eine Partitionierung unter einer Kapazitätsnebenbedingung - strukturell verwandt
-mit Bin Packing, das bereits für sich NP-schwer ist, mit $s_i$ als Item-Gewicht im Bin-Packing-
-Sinn), und **in welcher Reihenfolge** die Positionen eines Batches abgelaufen werden (ein
-Traveling-Salesman-Problem je Batch, ebenfalls NP-schwer). Beide Entscheidungen beeinflussen sich
+mit Bin Packing, das bereits für sich NP-schwer ist; die Items sind hier die Bestellungen mit
+dem Gewicht $\sum_{i \in P_o} s_i$), und **in welcher Reihenfolge** die Positionen eines
+Batches abgelaufen werden (ein Rundreiseproblem je Batch). Letzteres ist im Allgemeinen ein
+Traveling-Salesman-Problem; für das hier verwendete Layout mit parallelen Gängen und zwei
+Quergassen (ein Block) gibt es allerdings einen polynomiellen exakten Algorithmus (Ratliff &
+Rosenthal 1983). Die Demo verwendet ihn nicht, sondern Nearest-Neighbor mit 2-opt. Die
+Schwierigkeit des Gesamtproblems kommt aus der Batch-Bildung (Gademann & van de Velde 2005).
+Beide Entscheidungen beeinflussen sich
 gegenseitig: welche Gruppierung eine kurze Route ermöglicht, hängt von den Positionen der
 beteiligten Bestellungen ab - eine gemeinsame exakte Lösung ist bei realistischen
 Instanzgrößen praktisch nicht mehr berechenbar. Die erste Gruppierung entsteht deshalb konstruktiv
@@ -617,7 +625,8 @@ Batch-Distanz senkt:
 **Inter-Batch-Nachbarschaft:** Ergänzt um Relocate- und Swap-Nachbarschaft zwischen zwei Batches
 $u, v$: Relocate verschiebt eine Bestellung $o \in B_u$ nach $B_v$ (zulässig, wenn
 $\sum_{i \in P_o} s_i + \sum_{o' \in B_v} \sum_{i \in P_{o'}} s_i \leq Q$ gilt), Swap tauscht je
-eine Bestellung $o_u \in B_u$ und $o_v \in B_v$. Ein Zug wird ausgeführt, wenn er die Summe der
+eine Bestellung $o_u \in B_u$ und $o_v \in B_v$ (zulässig, wenn die Kapazität $Q$ in beiden
+Batches nach dem Tausch eingehalten wird). Ein Zug wird ausgeführt, wenn er die Summe der
 beiden betroffenen Batch-Distanzen senkt - aus Performance-Gründen bewertet anhand einer
 Cheapest-Insertion-Einfügung in die bestehende Route statt eines vollen Neu-Routings je Kandidat
 (Details und die Benchmark-Zahlen dazu in `batch_local_search.py` und im README). Diese
@@ -630,13 +639,14 @@ Inter-Batch-Nachbarschaft noch einen verbessernden Zug findet. Der Grund: würde
 2-opt-Optimum routen und danach unangetastet die Inter-Batch-Suche starten (wie ursprünglich
 umgesetzt), würden Zuteilungs-Kandidatenzüge anhand noch nicht routenoptimierter Distanzen bewertet
 - das kann zu suboptimalen Zuteilungsentscheidungen führen (empirisch bestätigt, siehe README). Das
-Ergebnis ist ein **lokales** Optimum bezüglich der VEREINIGTEN Nachbarschaftsstruktur, weiterhin
-ohne Garantie für die global beste Lösung.
+Ergebnis ist ein **lokales** Optimum bezüglich der VEREINIGTEN Nachbarschaftsstruktur (mit der
+Cheapest-Insertion-Bewertung der Zuteilungszüge und einem Sicherheitslimit von
+`LOCAL_SEARCH_MAX_MOVES` Zügen), weiterhin ohne Garantie für die global beste Lösung.
 
 **Grenze reiner Lokalsuche:** Auch die vereinigte Nachbarschaft stoppt beim ERSTEN lokalen Optimum
 - es gibt keinen Mechanismus, es wieder zu verlassen, selbst wenn ein besseres lokales Optimum nur
 einen ungünstigen Zwischenschritt entfernt läge. Iterated Local Search adressiert genau das: eine
-Störung $p$ (ein paar zufällige, zulässige Relocates) erzeugt aus einer Lösung $\pi$ eine
+Störung $p$ (ein paar zulässige Relocates: zufällige Bestellung, Ziel-Batch per UCB1 gewählt) erzeugt aus einer Lösung $\pi$ eine
 benachbarte Startlösung $p(\pi)$, auf die erneut die verschachtelte Suche angewendet wird.
 Wiederholt für ein Zeitbudget statt eine feste Anzahl Wiederholungen, das beste je gefundene
 $\pi^*$ wird behalten - eine einfache, aber in der Metaheuristik-Literatur gut etablierte Form der
@@ -650,6 +660,6 @@ st.markdown("---")
 
 st.caption(
     "Diese Demo ist Teil des Portfolios von [Sebastian Hanisch](https://sebastianhanisch.net) – "
-    "Operations Research und Machine Learning. Interesse an einer maßgeschneiderten Lösung für "
-    "Ihr Unternehmen? [Kontakt aufnehmen](https://sebastianhanisch.net/kontakt.html)"
+    "Operations Research und Machine Learning ([Über mich](https://sebastianhanisch.net/ueber-mich.html)). "
+    "Mehr zum Thema: [Lagerlogistik optimieren](https://sebastianhanisch.net/lagerlogistik-optimierung.html)."
 )

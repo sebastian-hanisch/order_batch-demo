@@ -21,7 +21,7 @@ def generate_batch_plan_pdf(label, batches, final_routes, order_ids_by_item, ais
 
     total_dist = solution_totals(final_routes, D)
     n_items_total = sum(len(r) for r in final_routes)
-    total_hours, total_cost, throughput = distance_to_business(total_dist, n_items_total, len(batches), walking_speed_mps, pick_time_s, cost_per_hour)
+    total_hours, total_cost, throughput = distance_to_business(total_dist, n_items_total, walking_speed_mps, pick_time_s, cost_per_hour)
     show_volume = capacity_mode != CAPACITY_MODE_POSITIONS
 
     pdf = FPDF()

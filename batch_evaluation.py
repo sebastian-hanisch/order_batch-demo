@@ -52,8 +52,13 @@ def batch_capacity_size(items, item_sizes):
 def batch_capacity_excess(batch, capacity, item_sizes):
     """Wie stark ein Batch die Kapazität überschreitet (0, wenn er sie
     einhält) - kann bei einer Einzelbestellung auftreten, die für sich
-    genommen schon größer als die Batch-Kapazität ist."""
-    return max(0.0, batch_capacity_size(batch["items"], item_sizes) - capacity)
+    genommen schon größer als die Batch-Kapazität ist. Toleranz EPS
+    deckt sich mit der Akzeptanzschwelle `capacity + EPS` der Inter-Batch-
+    Lokalsuche (batch_local_search.py), damit ein Batch, den die Suche als
+    zulässig behandelt hat, hier nicht durch Fließkomma-Rundung (z. B. bei
+    aufsummierten Volumen) fälschlich als überladen gilt."""
+    size = batch_capacity_size(batch["items"], item_sizes)
+    return 0.0 if size <= capacity + EPS else size - capacity
 
 
 def capacity_summary_text(n_items, cap_used, capacity, capacity_mode):
@@ -72,7 +77,7 @@ def solution_totals(final_routes, D):
     return sum(route_distance(r, D) for r in final_routes)
 
 
-def distance_to_business(total_distance_m, n_items, n_batches, walking_speed_mps, pick_time_s, cost_per_hour):
+def distance_to_business(total_distance_m, n_items, walking_speed_mps, pick_time_s, cost_per_hour):
     """Rechnet Gesamtdistanz + Gesamtzahl kommissionierter Positionen in
     Kommissionierzeit (h), Personalkosten (€) und Durchsatz (Positionen/h)
     um. Die Pickzeit selbst (pick_time_s * n_items) ist über alle

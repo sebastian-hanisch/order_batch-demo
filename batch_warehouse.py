@@ -71,5 +71,11 @@ def distance_scenario_key(aisles, positions, aisle_spacing, aisle_length):
     build_distance_matrix definiert,
     damit eine künftige Änderung an dessen Parametern einen offensichtlichen,
     co-lokalisierten Ort zum Mitpflegen hat, statt zwei entfernte Kopien in
-    app.py und batch_ui_panel.py suchen zu müssen."""
-    return (tuple(aisles.tolist()), tuple(np.round(positions, 2).tolist()), aisle_spacing, aisle_length)
+    app.py und batch_ui_panel.py suchen zu müssen.
+
+    Positionen werden dabei NICHT gerundet (Code-Review-Fund): build_distance_matrix
+    selbst rechnet mit voller Fließkomma-Präzision, eine Rundung im Cache-Key
+    würde also zwei unterschiedliche, manuell editierte Positionen (die auf
+    dieselben 2 Nachkommastellen runden) fälschlich als identisch behandeln
+    und eine veraltete Distanzmatrix aus dem Cache liefern."""
+    return (tuple(aisles.tolist()), tuple(positions.tolist()), aisle_spacing, aisle_length)
