@@ -1108,7 +1108,7 @@ Modell vergleichen, nicht die Kulisse (Stand 2026-09-23):
   mit Fristen in der `warehouse-transfer-demo` (ATCS, GRASP, CP-SAT), nur mit Kommissionierern als Maschinen.
 - **Mehrere Kommissionierer mit Wegekonflikten** ist das Modell "Ressourcen behindern sich auf gemeinsamer
   Bahn" wie in der `quaycrane-demo` (Kräne auf einer Schiene, dort 1-D; hier ein Gangnetz).
-- **Ergebnis einer Vorab-Messreihe zu beiden Erweiterungen zusammen (2026-09-23):** Blockieren ist groß (bei 8 Gängen und K=4 Kommissionierern 15 % der Arbeitszeit Warten, doppelte Verspätung) und selbst das exakte Optimum zahlt 29–35 % Aufpreis; es frisst bis zu 57 % des Vorteils einer Fristenregel. Eine einfache Konfliktvermeidung hilft nur bei engen Fristen und auf wenige Gänge konzentrierter Dringlichkeit (2,5–6 %), sonst schadet sie. Formal ein Job-Shop mit Fristen und Obergrenze paralleler Aufträge. Noch nicht gebaut.
+- **Ergebnis einer Vorab-Messreihe zu beiden Erweiterungen zusammen (2026-09-23):** Blockieren ist groß (bei 8 Gängen und K=4 Kommissionierern 15 % der Arbeitszeit Warten, doppelte Verspätung) und selbst das exakte Optimum zahlt 29–35 % Aufpreis; es frisst bis zu 57 % des Vorteils einer Fristenregel. Eine einfache Konfliktvermeidung hilft nur bei engen Fristen und auf wenige Gänge konzentrierter Dringlichkeit (2,5–6 %), sonst schadet sie. Formal ein Job-Shop mit Fristen und Obergrenze paralleler Aufträge. Umgesetzt in der `wellenfreigabe-demo`.
 
 ## 1. Lokal ausführen
 
